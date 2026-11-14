@@ -117,6 +117,7 @@ bag記録のトピック一覧は自動改名しないため、トピックを�
 | `fusion_mode` / `comparison_profile` | `layers` / `current`。`points`時のprofile既定は`matched` |
 | `batch_interval` / `common_voxel_size` / `common_decay` | `0.1 s` / `0.05 m` / `0.8 s`（matched時） |
 | `gates_config` / `costmap_config` | `source_costmaps/config/{gates,costmap}.yaml` |
+| `remote_navigation` | `false`。`true` で navigate.py を起動せず path adapter だけ（Xavier で `docker/xavier/navigate_xavier.sh`）。`path_timeout` > 0 が必須 |
 | `image_topic` / `server_host` / `server_port` | `/usb_cam/image_raw` / `127.0.0.1` / `5557` |
 | `max_input_width` / `cloud_stride` | `640` / `4` |
 | `record` / `diagnostics` | `true` / `false` |

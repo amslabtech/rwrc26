@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """ROS launch adapters for the existing navigation script and dated bag recording.
 
-Only main() imports rospy so command construction and process cleanup can be
-tested without ROS, model loading, a camera, or robot command publishers.
+Only main() and xavier_main() import rospy so command construction and process
+cleanup can be tested without ROS, model loading, a camera, or robot command publishers.
+
+On the Xavier (split inference), `session_runner.py --xavier` reads the parameters that
+navigation.launch put under /placenav_runner on parrot and starts navigate.py with the
+same command line, so both machines can never disagree on route, models or indices.
 """
 from datetime import datetime, timedelta, timezone
 import ast
@@ -66,8 +70,19 @@ def navigation_command(params):
         command.append('--no-visualization')
     if params.get('diagnostics', False) and supports_navigation_trace(directory):
         command.append('--trace-navigation')
+    if params.get('remote_navigation', False):
+        command.append('--remote-navigation')  # parrot: path adapter only
     # navigate_whill.sh starts the GNM path adapter itself. Do not duplicate it.
     return command, directory
+
+
+def xavier_navigation_command(params, placenav_src):
+    """navigate.py alone, with parrot's launch parameters, from this machine's checkout."""
+    if not params.get('remote_navigation', False):
+        raise ValueError('navigation.launch on parrot was not started with remote_navigation:=true')
+    local = dict(params, placenav_src=placenav_src, remote_navigation=False, visualization=False)
+    command, directory = navigation_command(local)
+    return command+['--no-path-adapter'], directory
 
 
 def recording_command(params, now=None):
@@ -217,5 +232,64 @@ def main():
         cleanup()
 
 
+def xavier_main(argv):
+    """Run navigate.py for the parrot launch until that launch (its placenav_runner) ends."""
+    import argparse
+    import rosgraph
+    import rospy
+    parser = argparse.ArgumentParser(description=xavier_main.__doc__)
+    parser.add_argument('--xavier', action='store_true')
+    parser.add_argument('--placenav-src', default=str(Path(__file__).resolve().parents[2]))
+    parser.add_argument('--runner', default='/placenav_runner', help='parrot node holding the parameters')
+    parser.add_argument('--wait', type=float, default=120.0, help='seconds to wait for the parrot launch')
+    args = parser.parse_args(argv)
+    rospy.init_node('placenav_xavier_runner')
+    master = rosgraph.Master('/placenav_xavier_runner')
+
+    def runner_uri():
+        try:
+            return master.lookupNode(args.runner)
+        except Exception:  # noqa: BLE001 - not registered (or master gone) = parrot launch ended
+            return None
+
+    deadline = time.monotonic()+args.wait
+    while not (runner_uri() and rospy.has_param(args.runner+'/remote_navigation')):
+        if rospy.is_shutdown() or time.monotonic() > deadline:
+            rospy.logfatal('No %s with remote_navigation on the master. Start navigation.launch '
+                           'remote_navigation:=true on parrot first.', args.runner)
+            return 1
+        rospy.loginfo_throttle(10, 'Waiting for navigation.launch remote_navigation:=true on parrot...')
+        time.sleep(.5)
+    session = runner_uri()  # a restarted launch registers again under a new URI
+    try:
+        command, directory = xavier_navigation_command(rospy.get_param(args.runner), args.placenav_src)
+    except (KeyError, TypeError, ValueError, OSError, SyntaxError) as error:
+        rospy.logfatal('Session configuration: %s', error)
+        return 1
+    rospy.loginfo('Starting navigation in %s: %s', directory, ' '.join(command[2:]))
+    process = subprocess.Popen(command, cwd=str(directory), start_new_session=True)
+    lock = threading.Lock()
+    def cleanup():
+        with lock:
+            stop_process(process)
+    rospy.on_shutdown(cleanup)
+    try:
+        while not rospy.is_shutdown():
+            status = process.poll()
+            if status is not None:
+                rospy.logerr('navigation exited with status %s', status) if status else rospy.loginfo('navigation finished')
+                return 0 if status == 0 else 1
+            if runner_uri() != session:
+                rospy.loginfo('%s ended or restarted on parrot; stopping navigation here', args.runner)
+                return 0
+            time.sleep(.5)
+        return 0
+    finally:
+        cleanup()
+
+
 if __name__ == '__main__':
+    import sys
+    if '--xavier' in sys.argv[1:]:
+        raise SystemExit(xavier_main(sys.argv[1:]))
     raise SystemExit(main())

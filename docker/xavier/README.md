@@ -44,15 +44,52 @@ parrot (x86, Internet)                          Xavier (JetPack 5.0.2 のまま,
 ```bash
 ssh amsl@192.168.1.246
 sudo jetson_clocks   # 計測・走行前に毎回（再起動で戻る）。電力モードは sudo nvpmodel -q で確認
-/mnt/ssd/PlaceNav/docker/xavier/run_xavier.sh python3 -c \
-    "import torch; print(torch.__version__, torch.cuda.is_available()); print(torch.randn(2, device='cuda').sum())"
+/mnt/ssd/PlaceNav/docker/xavier/run_xavier.sh python3 ../docker/xavier/check_xavier.py   # GPU・cuDNN・cv_bridge（qemu では確認できない分）
 /mnt/ssd/PlaceNav/docker/xavier/run_xavier.sh python3 bench_inference.py \
     --pr-models cosplace salad megaloc --wp-models omnivla_edge nomad gnm_large
 ```
 
 5 Hz で回すには VPR + ウェイポイント推論の合計が 200 ms を十分下回る必要がある。
-この結果を見て Xavier に載せるモデルを決める。PlaceNav 用 Docker を手で使うときは
-`docker -H unix:///run/docker-placenav.sock ...`（既定の `docker` は既存のデーモンを指す）。
+2026-11-14 の計測（中央値）: CosPlace 21.5 / SALAD 121.8 / MegaLoc 121.1、GNM large 20.9 /
+OmniVLA-edge 100.5 / NoMaD 186.0 ms。使う組み合わせは **CosPlace + OmniVLA-edge**（約 122 ms）。
+PlaceNav 用 Docker を手で使うときは `docker -H unix:///run/docker-placenav.sock ...`
+（既定の `docker` は既存のデーモンを指す）。
+
+### 通信の確認（`link_probe.py`、モデル不要）
+
+parrot から Xavier へのカメラ画像の届き方（頻度・欠落・遅れ）と、計算時間を足した経路点の遅れを測る。
+
+```bash
+# parrot（3 つとも起動したまま）
+python3 docker/xavier/link_probe.py echo      # Xavier が時計のずれを測るための応答役
+python3 docker/xavier/link_probe.py camera    # 実カメラを起動しない場合だけ（1280x720 の生画像 5 Hz）
+# Xavier
+/mnt/ssd/PlaceNav/docker/xavier/run_xavier.sh python3 ../docker/xavier/link_probe.py measure --work-ms 122
+```
+
+1 Gbps では 1280x720 の生画像が欠落なく約 30 ms で届く。100 Mbps だと 1 枚 235 ms かかり欠落する
+（2026-11-14 にハブ–Xavier 間の不良ケーブルで 100 Mbps になっていた。Xavier で
+`cat /sys/class/net/eth0/speed` が 1000 であること）。
+
+## 実機での走行（parrot で launch、Xavier で navigate.py）
+
+```bash
+# 1. parrot: 通常どおり。navigate.py だけ起動しない。path_timeout > 0 でないと launch が拒否する
+roslaunch rwrc26_bringup navigation.launch remote_navigation:=true path_timeout:=1.0 \
+    wp_model:=omnivla_edge pr_model:=cosplace topomap_dir:=<route> drive_robot:=false
+# 2. Xavier: parrot の /placenav_runner のパラメータをそのまま使って navigate.py を起動する
+sudo jetson_clocks
+/mnt/ssd/PlaceNav/docker/xavier/navigate_xavier.sh
+```
+
+- `navigate_xavier.sh` は最初に chrony を確認する。時刻源が parrot でない、またはずれが 5 ms を超える
+  （再起動直後に起きる）場合は起動しない。
+- route・モデル・各種インデックスは parrot の launch 引数だけで決まる。Xavier 側で指定するものはない。
+- parrot の launch を止める（または再起動する）と、Xavier 側の navigate.py も止まる。
+- Xavier か LAN が止まると、parrot の TEB は `path_timeout` 秒で経路を失って停止する。
+- `remote_navigation:=true` では parrot 側の PlaceNav GUI は出ない（位置推定の DB が Xavier 側にあるため）。rviz は出る。
+- topomap は `50_deploy.sh` で Xavier に送ってあること。初回は Xavier で `global-feats-cosplace.h5` を作るので起動に時間がかかる。
+- 最初は `drive_robot:=false` で、Xavier のログの `Average runtime` と rviz の経路を確認してから `true` にする。
 
 ### 元に戻す
 
@@ -67,15 +104,13 @@ sudo rm -rf /mnt/ssd/docker-placenav /mnt/ssd/PlaceNav
 ## 未検証・注意点
 
 - **R35.4.1 用のイメージを R35.1 のホストで動かす**（CUDA 11.4 は共通、ドライバはホストのものを使用）。
-  互換性の見込みはあるが未確認。上の `torch.cuda.is_available()` が `False` やエラーになる場合はベースイメージの変更が必要。
-- スクリプトは parrot と実機 Xavier ではまだ実行していない。確認済みは、ダウンロード元と sha256、
-  `nvidia-container-toolkit` の deb の中身（インストール時に Docker 設定を触らない）、`placenav-daemon.json` の
-  `dockerd --validate`（Docker 29.8 で）、aarch64 wheel の有無、計測スクリプトの x86 での動作のみ。
+  2026-11-13 に `check_xavier.py` で CUDA・cuDNN・cv_bridge の動作を確認済み。
+- 40〜50 と `check_xavier.py`・`bench_inference.py`・`link_probe.py` は parrot と実機 Xavier で実行済み（2026-11-13〜14）。
+  `navigate_xavier.sh` と `remote_navigation:=true` での走行は未実施。
 - イメージの PyTorch は 2.0.0（x86 イメージは 2.1.2）。x86 で書き出した VPR の TorchScript（`model_weights/vpr/*.pt`）を
   2.0 で読めない場合は、Xavier 上で `prepare_vpr.py --model <名前>` を再実行して書き出し直す
   （上流ソースと重みのキャッシュも Xavier に必要）。
-- `navigate.py` を Xavier で動かしてロボットを走らせるには、別途 `navigation.launch` の分割（parrot 側で
-  `navigate.py` を起動しない）、カメラ画像の縮小・間引き、`path_timeout:=1.0` の必須化が必要。未実装。
+- Xavier の CPU で行う画像の前処理（1280x720 の変換・縮小）の時間は未計測。`Average runtime` で確認する。
 
 ## 参考: Xavier を消去して JetPack 5.1.2 を書き込む場合（現在は使わない）
 

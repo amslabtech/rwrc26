@@ -86,6 +86,16 @@ class NavigationLaunchTest(unittest.TestCase):
             with self.subTest(argument=argument), self.assertRaises(Exception):
                 self.load(argument)
 
+    def test_remote_navigation_requires_path_timeout(self):
+        for argument in ('path_timeout:=0.0', 'path_timeout:=0'):
+            with self.subTest(argument=argument), self.assertRaises(Exception):
+                self.load('remote_navigation:=true', argument)
+        _, params = self.load('remote_navigation:=true', 'path_timeout:=1.0')
+        self.assertIs(params['/placenav_runner/remote_navigation'], True)
+        self.assertEqual(params['/placenav_teb_bridge/path_timeout'], 1.0)
+        _, params = self.load()
+        self.assertIs(params['/placenav_runner/remote_navigation'], False)
+
     def test_explicit_drive_switch(self):
         _, params = self.load('drive_robot:=true', 'robot_cmd_vel_topic:=/test/drive')
         self.assertEqual(params['/placenav_teb_bridge/cmd_vel_topic'], '/test/drive')

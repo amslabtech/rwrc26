@@ -139,6 +139,49 @@ Path('adapter.json').write_text(json.dumps(sys.argv[1:]))
         self.assertEqual(args[args.index('--target-frame')+1], 'test_odom')
         self.assertEqual(args[args.index('--expected-waypoints')+1], '8')
 
+    def test_remote_navigation_splits_parrot_and_xavier_commands(self):
+        directory = self.root/'PlaceNav'; directory.mkdir(); (directory/'navigate_whill.sh').touch()
+        xavier = self.root/'xavier src'; xavier.mkdir(); (xavier/'navigate_whill.sh').touch()
+        params = dict(placenav_src=str(directory), topomap_dir='route', wp_model='omnivla_edge',
+                      pr_model='cosplace', start_node_idx=4, remote_navigation=True)
+        parrot, _ = runner.navigation_command(params)
+        self.assertIn('--remote-navigation', parrot)
+        command, cwd = runner.xavier_navigation_command(params, str(xavier))
+        self.assertEqual(cwd, xavier.resolve())
+        self.assertEqual(command[1], str(xavier.resolve()/'navigate_whill.sh'))
+        self.assertNotIn('--remote-navigation', command)
+        self.assertIn('--no-path-adapter', command)
+        self.assertIn('--no-visualization', command)
+        # Everything that selects the route and models is identical on both machines.
+        strip = {'--remote-navigation', '--no-path-adapter', '--no-visualization'}
+        self.assertEqual([a for a in parrot[2:] if a not in strip], [a for a in command[2:] if a not in strip])
+        with self.assertRaises(ValueError):  # parrot launch without remote_navigation:=true
+            runner.xavier_navigation_command(dict(params, remote_navigation=False), str(xavier))
+
+    def test_whill_script_remote_mode_starts_only_the_adapter(self):
+        source = Path(os.environ.get('PLACENAV_TEST_SRC', Path(__file__).resolve().parents[2]))
+        directory = self.root/'PlaceNav'; directory.mkdir()
+        (directory/'navigate_whill.sh').write_text((source/'navigate_whill.sh').read_text())
+        fake_bin = directory/'bin'; fake_bin.mkdir()
+        python = fake_bin/'python3'
+        python.write_text('#!'+sys.executable+"\nfrom pathlib import Path\nPath('nav.json').write_text('started')\n")
+        python.chmod(0o755)
+        adapter = directory/'run_gnm_path_adapter_whill.sh'
+        adapter.write_text('#!'+sys.executable+"""\nimport json,sys
+from pathlib import Path
+Path('adapter.json').write_text(json.dumps(sys.argv[1:]))
+""")
+        adapter.chmod(0o755)
+        command, cwd = runner.navigation_command(dict(placenav_src=str(directory), topomap_dir='route',
+                                                      wp_model='omnivla_edge', remote_navigation=True))
+        env = dict(os.environ, PATH=str(fake_bin)+os.pathsep+os.environ['PATH'])
+        subprocess.run(command, cwd=cwd, env=env, check=True, timeout=6)
+        self.assertFalse((directory/'nav.json').exists())
+        args = json.loads((directory/'adapter.json').read_text())
+        self.assertEqual(args[args.index('--expected-waypoints')+1], '8')
+        rejected = subprocess.run(command+['--no-path-adapter'], cwd=cwd, env=env, timeout=6)
+        self.assertEqual(rejected.returncode, 2)
+
     def record_params(self, directory=None):
         return {'bag_dir': str(directory or self.root/'bags'), 'topics': ['/tf', '/tf', '/odom'],
                 'cmd_vel_topic': '/local_path/cmd_vel'}
