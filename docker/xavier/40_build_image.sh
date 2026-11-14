@@ -10,14 +10,15 @@ PLACENAV_DIR=$(cd "$(dirname "$0")/../.." && pwd)
 docker buildx build --platform linux/arm64 --load \
     -f "${PLACENAV_DIR}/docker/xavier/Dockerfile" -t "${IMAGE}" "${PLACENAV_DIR}"
 
-# Import check under qemu. Anything that imports torch needs the Jetson GPU driver,
-# so those packages are only located here and really imported on the Xavier.
+# Import check under qemu. Only located here (really imported on the Xavier by
+# check_xavier.py): torch & co. need the Jetson GPU driver, and cv_bridge's boost
+# module fails to initialise under qemu even in the plain arm64 ros:noetic image.
 docker run --rm --platform linux/arm64 -v "${PLACENAV_DIR}:/placenav:ro" "${IMAGE}" python3 -c "
-import importlib.util, rospy, cv_bridge, h5py, placenav_viz_msgs.msg
-missing = [m for m in ('torch', 'torchvision', 'efficientnet_pytorch', 'diffusers', 'gnm_train')
+import importlib.util, rospy, h5py, cv2, placenav_viz_msgs.msg
+missing = [m for m in ('torch', 'torchvision', 'efficientnet_pytorch', 'diffusers', 'gnm_train', 'cv_bridge')
            if importlib.util.find_spec(m) is None]
 assert not missing, missing
-print('imports ok')"
+print('imports ok (qemu); run check_xavier.py on the Xavier for the rest')"
 
 mkdir -p "${WORK_DIR}"
 docker save "${IMAGE}" | gzip -1 > "${IMAGE_TAR}.part"
