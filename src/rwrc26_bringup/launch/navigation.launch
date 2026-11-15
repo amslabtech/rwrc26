@@ -12,24 +12,33 @@
   <arg name="subgoal_mode" default="place_recognition"/>
   <arg name="filter_mode" default="bayesian"/>
   <arg name="motion_model" default="odometry"/>
-  <arg name="odom_max_gap" default="0.2"/>
-  <arg name="odom_noise" default="0.1"/>
+  <arg name="placenav_config" default="$(find rwrc26_bringup)/config/placenav.yaml"/>
+  <!-- Optional numeric overrides. Empty keeps the value from placenav_config. -->
+  <arg name="odom_max_gap" default=""/>
+  <arg name="odom_noise" default=""/>
+  <arg name="local_pose" default="true"/>
   <arg name="subgoal_update" default="nearest"/>
-  <arg name="pass_threshold" default="0.5"/>
-  <arg name="pass_confirmations" default="2"/>
-  <arg name="pass_local_mass" default="0.8"/>
-  <arg name="final_goal_tolerance" default="0.5"/>
-  <arg name="window_radius" default="3"/>
+  <arg name="pass_threshold" default=""/>
+  <arg name="pass_confirmations" default=""/>
+  <arg name="pass_local_mass" default=""/>
+  <arg name="goal_recovery_distance" default=""/>
+  <arg name="goal_recovery_threshold" default=""/>
+  <arg name="final_goal_tolerance" default=""/>
+  <arg name="goal_eval_position_tolerance" default=""/>
+  <!-- Legacy command-line angle override is still in radians. YAML uses degrees. -->
+  <arg name="goal_eval_yaw_tolerance" default=""/>
+  <arg name="goal_eval_neighborhood_radius" default=""/>
+  <arg name="window_radius" default=""/>
   <arg name="start_node_idx" default="0"/>
   <arg name="goal_node_idx" default="-1"/>
-  <arg name="lookahead" default="1"/>
-  <arg name="close_threshold" default="3"/>
-  <arg name="target_waypoint_idx" default="2"/>
-  <arg name="nomad_seed" default="0"/>
+  <arg name="lookahead" default=""/>
+  <arg name="close_threshold" default=""/>
+  <arg name="target_waypoint_idx" default=""/>
+  <arg name="nomad_seed" default=""/>
   <arg name="device" default="cuda"/>
-  <arg name="transition_model_window_lower" default="-1"/>
-  <arg name="transition_model_window_upper" default="2"/>
-  <arg name="filter_delta" default="10"/>
+  <arg name="transition_model_window_lower" default=""/>
+  <arg name="transition_model_window_upper" default=""/>
+  <arg name="filter_delta" default=""/>
   <arg name="recompute_place_recognition_db" default="false"/>
   <arg name="img_size" default="[]"/>
   <arg name="navigation_visualization" default="true"/>
@@ -113,7 +122,9 @@
   </node>
 
   <node pkg="rwrc26_bringup" type="session_runner.py" name="placenav_runner"
-        output="screen" required="$(arg navigation_required)">
+        output="screen" required="$(arg navigation_required)" clear_params="true">
+    <rosparam command="load" file="$(arg placenav_config)"/>
+    <param name="placenav_config" value="$(arg placenav_config)"/>
     <param name="role" value="navigation"/>
     <param name="placenav_src" value="$(arg placenav_src)"/>
     <param name="topomap_dir" value="$(arg topomap_dir)"/>
@@ -123,24 +134,30 @@
     <param name="filter_mode" value="$(arg filter_mode)"/>
     <param name="motion_model" value="$(arg motion_model)"/>
     <param name="odom_topic" value="$(arg odom_topic)"/>
-    <param name="odom_max_gap" value="$(arg odom_max_gap)" type="double"/>
-    <param name="odom_noise" value="$(arg odom_noise)" type="double"/>
+    <param if="$(eval arg('odom_max_gap') != '')" name="odom_max_gap" value="$(arg odom_max_gap)" type="double"/>
+    <param if="$(eval arg('odom_noise') != '')" name="odom_noise" value="$(arg odom_noise)" type="double"/>
+    <param name="local_pose" value="$(arg local_pose)" type="bool"/>
     <param name="subgoal_update" value="$(arg subgoal_update)"/>
-    <param name="pass_threshold" value="$(arg pass_threshold)" type="double"/>
-    <param name="pass_confirmations" value="$(arg pass_confirmations)" type="int"/>
-    <param name="pass_local_mass" value="$(arg pass_local_mass)" type="double"/>
-    <param name="final_goal_tolerance" value="$(arg final_goal_tolerance)" type="double"/>
-    <param name="window_radius" value="$(arg window_radius)"/>
+    <param if="$(eval arg('pass_threshold') != '')" name="pass_threshold" value="$(arg pass_threshold)" type="double"/>
+    <param if="$(eval arg('pass_confirmations') != '')" name="pass_confirmations" value="$(arg pass_confirmations)" type="int"/>
+    <param if="$(eval arg('pass_local_mass') != '')" name="pass_local_mass" value="$(arg pass_local_mass)" type="double"/>
+    <param if="$(eval arg('goal_recovery_distance') != '')" name="goal_recovery_distance" value="$(arg goal_recovery_distance)" type="double"/>
+    <param if="$(eval arg('goal_recovery_threshold') != '')" name="goal_recovery_threshold" value="$(arg goal_recovery_threshold)" type="double"/>
+    <param if="$(eval arg('final_goal_tolerance') != '')" name="final_goal_tolerance" value="$(arg final_goal_tolerance)" type="double"/>
+    <param if="$(eval arg('goal_eval_position_tolerance') != '')" name="goal_eval_position_tolerance" value="$(arg goal_eval_position_tolerance)" type="double"/>
+    <param if="$(eval arg('goal_eval_yaw_tolerance') != '')" name="goal_eval_yaw_tolerance" value="$(arg goal_eval_yaw_tolerance)" type="double"/>
+    <param if="$(eval arg('goal_eval_neighborhood_radius') != '')" name="goal_eval_neighborhood_radius" value="$(arg goal_eval_neighborhood_radius)" type="double"/>
+    <param if="$(eval arg('window_radius') != '')" name="window_radius" value="$(arg window_radius)"/>
     <param name="start_node_idx" value="$(arg start_node_idx)"/>
     <param name="goal_node_idx" value="$(arg goal_node_idx)"/>
-    <param name="lookahead" value="$(arg lookahead)"/>
-    <param name="close_threshold" value="$(arg close_threshold)"/>
-    <param name="target_waypoint_idx" value="$(arg target_waypoint_idx)"/>
-    <param name="nomad_seed" value="$(arg nomad_seed)"/>
+    <param if="$(eval arg('lookahead') != '')" name="lookahead" value="$(arg lookahead)"/>
+    <param if="$(eval arg('close_threshold') != '')" name="close_threshold" value="$(arg close_threshold)"/>
+    <param if="$(eval arg('target_waypoint_idx') != '')" name="target_waypoint_idx" value="$(arg target_waypoint_idx)"/>
+    <param if="$(eval arg('nomad_seed') != '')" name="nomad_seed" value="$(arg nomad_seed)"/>
     <param name="device" value="$(arg device)"/>
-    <param name="transition_model_window_lower" value="$(arg transition_model_window_lower)"/>
-    <param name="transition_model_window_upper" value="$(arg transition_model_window_upper)"/>
-    <param name="filter_delta" value="$(arg filter_delta)"/>
+    <param if="$(eval arg('transition_model_window_lower') != '')" name="transition_model_window_lower" value="$(arg transition_model_window_lower)"/>
+    <param if="$(eval arg('transition_model_window_upper') != '')" name="transition_model_window_upper" value="$(arg transition_model_window_upper)"/>
+    <param if="$(eval arg('filter_delta') != '')" name="filter_delta" value="$(arg filter_delta)"/>
     <param name="recompute_place_recognition_db" value="$(arg recompute_place_recognition_db)"/>
     <rosparam param="img_size" subst_value="true">$(arg img_size)</rosparam>
     <param name="global_frame" value="$(arg global_frame)"/>
@@ -180,6 +197,10 @@
   </include>
   <node if="$(arg debug_costmaps)" pkg="source_costmaps" type="source_costmaps_node" name="source_costmaps"
         ns="obstacles" output="screen">
+  </node>
+  <node if="$(arg local_pose)" pkg="rwrc26_bringup" type="local_goal_visualizer.py"
+        name="local_goal_visualizer" output="screen">
+    <param name="target_frame" value="$(arg global_frame)"/>
   </node>
   <node if="$(arg rviz)" pkg="rviz" type="rviz" name="navigation_rviz"
         args="-d $(find rwrc26_bringup)/rviz/navigation.rviz -f $(arg global_frame)"/>

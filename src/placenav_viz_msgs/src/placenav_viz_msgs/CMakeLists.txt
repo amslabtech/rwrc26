@@ -53,6 +53,8 @@ find_package(catkin REQUIRED COMPONENTS
    FILES
    Viz.msg
    LocalizationDiagnostics.msg
+   GoalEvaluation.msg
+   LocalGoalPose.msg
  )
 
 ## Generate services in the 'srv' folder

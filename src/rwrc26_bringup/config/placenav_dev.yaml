@@ -1,0 +1,41 @@
+# 開発用のPlaceNav調整値。navigation_debug.launchが読み込む。
+# 実機用placenav.yamlとは独立したファイル。初期値だけ同じにしている。
+# 明示したlaunch引数が、このYAMLより優先される。
+# 下記は既存値の移行であり、実機で最適化済みの値という意味ではない。
+
+# odom補間の最大間隔 [s]。これを超える空白は補間しない。
+odom_max_gap: 0.2
+# 並進の予測ノイズ [m/sqrt(m)]。1m走行あたり分散0.01m²という暫定仮定。
+odom_noise: 0.1
+
+# 到達・通過スコアのしきい値 [0,1]。過半数という設計値。
+pass_threshold: 0.5
+# passage・救済・最終到達の連続確認画像数。中間arrivalは1画像のまま。
+pass_confirmations: 2
+# 目標近傍に必要な全体確率 [0,1]。集中度を確認する暫定しきい値。
+pass_local_mass: 0.8
+
+# 後方救済を検討する距離 [m]。小さな前後の揺れを除くための設計値。
+goal_recovery_distance: 4.0
+# 救済に必要な全体確率 [0,1]。
+goal_recovery_threshold: 0.8
+
+# 最終ゴールの許容進捗幅 [m]。角度は必須条件にしない。
+final_goal_tolerance: 0.5
+# 中間arrivalの許容進捗幅 [m]。撮影位置への厳密な座標一致は要求しない。
+goal_eval_position_tolerance: 0.5
+# 撮影方向との一致度を診断する許容角度 [deg]。
+# 暫定20度。現在の到達・通過判定には使わない。内部ではradへ変換する。
+goal_eval_yaw_tolerance_deg: 20.0
+# 目標近傍の経路進捗半径 [m]。前方救済の距離にも使用する。
+goal_eval_neighborhood_radius: 2.0
+
+# 既存のVPR・画像ゴール選択設定。
+window_radius: 3                 # sliding_window用の探索半径 [node]
+lookahead: 1                     # nearestの先読み数。passage/arrivalは1が必要。
+close_threshold: 3               # temporal_distanceモード用。VPRでは使用しない。
+target_waypoint_idx: 2           # 出力する予測waypointの番号（0始まり）
+nomad_seed: 0                    # NoMaD推論の再現用seed
+transition_model_window_lower: -1 # legacy移動更新の範囲 [node]
+transition_model_window_upper: 2
+filter_delta: 10                 # 観測尤度の強さ。従来値を維持。

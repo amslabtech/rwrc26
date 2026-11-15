@@ -106,6 +106,14 @@ class MotionTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             OdometryMotionModel(self.path, list(reversed(self.names)))
 
+    def test_single_node_retains_outside_motion(self):
+        self.make_map([0])
+        model = self.model([1])
+        model.predict(sample(11, x=1))
+        self.assertAlmostEqual(self.mean(model), 1)
+        self.assertEqual(model.progress_probabilities(0)['near'], 0)
+        np.testing.assert_allclose(model.node_belief(), [1])
+
     def test_reanchor_preserves_location_and_skips_reset_displacement(self):
         model = self.model([.1, .5, .3, .1]);original = model.node_belief()
         model.reset_odometry();model.predict(sample(11, 100, 200, 2., 'vo_odom'))
@@ -143,6 +151,44 @@ class MotionTest(unittest.TestCase):
             model.predict(history.at(current.stamp_ns))
         self.assertAlmostEqual(self.mean(model) - start, .4, places=8)
 
+    def test_long_gap_moves_progress_but_real_pose_jump_reanchors(self):
+        model = self.model([0, 1, 0, 0]);start = self.mean(model)
+        history = OdometryHistory(.2, max_speed=3)
+        epoch = None
+        for current in [sample(10), sample(10.1, x=.1),
+                        sample(15, x=3.1), sample(15.1, x=3.2)]:
+            history.add(current)
+            if epoch != history.epoch:
+                model.reset_odometry();epoch = history.epoch
+            model.predict(history.at(current.stamp_ns))
+        self.assertEqual(history.epoch, 0)
+        self.assertIsNone(history.at(12_000_000_000))
+        self.assertAlmostEqual(self.mean(model)-start, 3.2, places=8)
+        self.assertEqual(history.add(sample(16, x=100)), 'odometry pose jump')
+        model.reset_odometry();model.predict(history.at(16_000_000_000))
+        self.assertAlmostEqual(self.mean(model)-start, 3.2, places=8)
+
+    def test_timestamp_jitter_retains_small_original_movements(self):
+        model = self.model([0, 1, 0, 0]);start = self.mean(model)
+        history = OdometryHistory(.2, max_speed=3)
+        # Recorded pattern: 34.8 ms then 7.9 ms, with a 2.85 cm second step.
+        samples = [sample(10), sample(10.034811212, x=.0190137446),
+                   sample(10.042726918, x=.0475012390),
+                   sample(10.069952073, x=.0669124864)]
+        for current in samples:
+            self.assertIsNone(history.add(current))
+            self.assertEqual(history.at(current.stamp_ns), current)
+            model.predict(history.at(current.stamp_ns))
+        self.assertEqual(history.epoch, 0)
+        self.assertEqual(list(history.samples), samples)
+        self.assertAlmostEqual(self.mean(model)-start, samples[-1].pose[0], places=8)
+
+    def test_timestamp_jitter_allowance_still_rejects_a_large_short_step(self):
+        history = OdometryHistory(.2, max_speed=3)
+        history.add(sample(10))
+        self.assertEqual(history.add(sample(10.008, x=.2)), 'odometry pose jump')
+        self.assertEqual(history.epoch, 1)
+
     def test_duplicate_image_is_not_assimilated_twice(self):
         descriptors = np.eye(4, dtype=np.float32)
         path = self.root/'features.h5'
@@ -155,7 +201,12 @@ class MotionTest(unittest.TestCase):
             return {'global_descriptor': torch.tensor(descriptors[index:index+1])}
         filt = PlaceRecognitionTopologicalFilter(extract, path, self.root,
                                                  motion_model='odometry')
-        filt.initialize_model(0);filt.match(0, sample(10))
+        first_node, _ = filt.initialize_model(0, sample(10))
+        expected = filt.obs_lhood(descriptors[0]);expected /= expected.sum()
+        np.testing.assert_allclose(filt.belief, expected)
+        self.assertEqual(first_node, 0)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(filt.motion.last_odometry, sample(10))
         original = filt.belief.copy();before = len(calls)
         filt.match(0, sample(10))
         np.testing.assert_array_equal(filt.belief, original)
@@ -164,19 +215,36 @@ class MotionTest(unittest.TestCase):
 
 
 class HistoryTest(unittest.TestCase):
+    def test_identical_duplicate_does_not_break_continuity(self):
+        history = OdometryHistory(.2, max_speed=3)
+        history.add(sample(10));history.add(sample(10.1, x=.1))
+        self.assertIsNone(history.add(sample(10.1, x=.1)))
+        self.assertEqual(history.epoch, 0)
+        self.assertEqual(len(history.samples), 2)
+
+    def test_changed_duplicate_pose_starts_new_epoch(self):
+        for changed in [sample(10.1, x=100), sample(10.1, yaw=1)]:
+            history = OdometryHistory(.2, max_speed=3)
+            history.add(sample(10));history.add(sample(10.1, x=.1))
+            self.assertEqual(history.add(changed), 'odometry changed at duplicate timestamp')
+            self.assertEqual(history.epoch, 1)
+            self.assertIsNone(history.at(10_050_000_000))
+            self.assertEqual(list(history.samples), [changed])
+
     def test_future_odometry_is_required_and_interpolated(self):
         history = OdometryHistory(.2);history.add(sample(10))
         self.assertIsNone(history.at(10_050_000_000))
         history.add(sample(10.1, x=2))
         self.assertAlmostEqual(history.at(10_050_000_000).pose[0], 1.)
 
-    def test_gap_frame_change_and_clock_reset_start_new_epoch(self):
+    def test_publication_gap_keeps_epoch_but_frame_and_clock_reset_do_not(self):
         history = OdometryHistory(.2);history.add(sample(10))
-        self.assertEqual(history.add(sample(11.1)), 'odometry input gap')
+        self.assertIsNone(history.add(sample(11.1)))
+        self.assertEqual(history.epoch, 0)
         self.assertIsNone(history.at(10_500_000_000))
         self.assertEqual(history.add(sample(11.2, frame='new_odom')), 'coordinate frames changed')
         self.assertEqual(history.add(sample(9)), 'timestamp moved backwards')
-        self.assertEqual(history.epoch, 3)
+        self.assertEqual(history.epoch, 2)
 
     def test_short_gap_keeps_endpoints_without_interpolating_missing_interval(self):
         history = OdometryHistory(.2, max_speed=3)
@@ -187,11 +255,13 @@ class HistoryTest(unittest.TestCase):
         history.add(sample(10.4, x=.4, yaw=.5))
         self.assertAlmostEqual(history.at(10_350_000_000).pose[0], .35)
 
-    def test_short_gap_boundary_and_configured_interpolation_limit(self):
+    def test_gap_length_does_not_change_configured_interpolation_limit(self):
         history = OdometryHistory(.2)
         history.add(sample(10))
         self.assertIsNone(history.add(sample(11)))
-        self.assertEqual(history.add(sample(12.000000001)), 'odometry input gap')
+        self.assertIsNone(history.add(sample(12.000000001)))
+        self.assertEqual(history.epoch, 0)
+        self.assertIsNone(history.at(11_500_000_000))
         configured = OdometryHistory(2.)
         configured.add(sample(10))
         self.assertIsNone(configured.add(sample(11.5)))
@@ -213,6 +283,31 @@ class HistoryTest(unittest.TestCase):
         self.assertEqual(history.add(sample(10.02)), 'odometry pose jump')
         self.assertEqual(history.epoch, 1)
         self.assertIsNone(history.at(10_010_000_000))
+
+    def test_long_gap_preserves_endpoints_but_does_not_extrapolate_or_fill_it(self):
+        history = OdometryHistory(.2, max_speed=3)
+        history.add(sample(10))
+        self.assertIsNone(history.add(sample(35, 3, 1, .5)))
+        self.assertEqual(history.epoch, 0)
+        self.assertIsNone(history.at(20_000_000_000))
+        self.assertIsNone(history.at(35_050_000_000))
+        self.assertEqual(history.at(35_000_000_000), sample(35, 3, 1, .5))
+        history.add(sample(35.1, 3.1, 1, .5))
+        self.assertAlmostEqual(history.at(35_050_000_000).pose[0], 3.05)
+
+    def test_long_gap_still_checks_impossible_speed(self):
+        history = OdometryHistory(.2, max_speed=3)
+        history.add(sample(10))
+        self.assertEqual(history.add(sample(15, x=100)), 'odometry pose jump')
+        self.assertEqual(history.epoch, 1)
+        self.assertEqual(list(history.samples), [sample(15, x=100)])
+
+    def test_long_gap_does_not_hide_frame_or_clock_changes(self):
+        history = OdometryHistory(.2, max_speed=3)
+        history.add(sample(10))
+        self.assertEqual(history.add(sample(35, frame='new_odom')), 'coordinate frames changed')
+        self.assertEqual(history.add(sample(9)), 'timestamp moved backwards')
+        self.assertEqual(history.epoch, 2)
 
 
 if __name__ == '__main__':

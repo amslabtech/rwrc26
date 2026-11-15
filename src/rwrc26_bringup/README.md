@@ -91,6 +91,11 @@ roslaunch rwrc26_bringup navigation_debug.launch \
   bag_pause:=false
 ```
 
+`bag_start:=420`でbag先頭から420秒（7分）の記録位置から再生できる。既定は`0.0`。
+これはbagの記録時刻に対する開始位置であり、スタートノードIDの指定ではない。
+`bag_pause:=true`なら指定位置で一時停止して待機する。モデル起動後にSpaceで再開する。
+途中再生でも初期ノードは画像の全探索で推定する。
+
 bagからC2画像、D435点群、odom、TFを再生し、C2深度・点群、PlaceNav経路、
 コストマップ、TEB経路を再計算する。既定の画像入力は
 `/usb_cam/image_raw/compressed`。非圧縮画像のbagは `bag_camera_transport:=raw` を指定する。
@@ -125,19 +130,56 @@ bag記録のトピック一覧は自動改名しないため、トピックを�
 
 ## PlaceNavの引数
 
+PlaceNavの数値調整値は、起動方法に応じて次のYAMLから読み込む。
+
+| 起動launch | 既定の設定ファイル |
+|---|---|
+| `navigation.launch`（実機） | [config/placenav.yaml](config/placenav.yaml) |
+| `navigation_debug.launch`（開発・bag再生） | [config/placenav_dev.yaml](config/placenav_dev.yaml) |
+
+両ファイルの初期値は移行前と同じ。以後は実機用と開発用を独立して調整できる。
+ファイル内のコメントに、単位・用途・暫定値である理由を記載している。
+**明示したlaunch引数 > 選択したYAML**の優先順で、既存の数値引数も引き続き使用できる。
+数値引数を省略するとYAMLの値を保持する。別ファイルは`placenav_config:=/絶対パス/custom.yaml`で指定する。
+YAMLを変更した場合はlaunchを再起動する。
+
+```bash
+# 実機用YAMLを読み込み、今回だけ判定しきい値を上書きする。
+roslaunch rwrc26_bringup navigation.launch pass_threshold:=0.6
+
+# 開発用YAMLは自動選択される。従来のbag指定のままでよい。
+roslaunch rwrc26_bringup navigation_debug.launch \
+  topomap_dir:=whill_odometry_tsukuba_3.5 \
+  subgoal_update:=arrival local_pose:=true \
+  bag:=/home/user/bagfiles/tsukuba/20261107_111825_777874.bag
+```
+
+角度はYAMLでは`goal_eval_yaw_tolerance_deg: 20.0`と**度**で指定し、内部でradへ変換する。
+20度は暫定の方向診断幅であり、現在のarrival・passage・最終到達の必須条件ではない。
+従来のlaunch引数`goal_eval_yaw_tolerance:=...`は互換性のため**rad**のままで、指定するとYAMLの度より優先する。
+
+地図・bag・モデル・動作モードなどは引き続きlaunch引数で選ぶ。
+以下の数値既定値は同梱YAMLの初期値を示す。`session_runner.py`が有効値を
 `navigate_whill.sh`から`placenav/parser.py`へ渡す。
+`navigate_whill.sh`を単独で実行する場合は、このROS用YAMLを自動では読まず、従来のCLI設定を使う。
 
 | launch引数 | 既定値 |
 |---|---|
+| `placenav_config` | 実機：`config/placenav.yaml`、開発：`config/placenav_dev.yaml` |
 | `topomap_dir` | `whill_odometry_tsukuba_3.5` |
 | `wp_model` / `pr_model` | `nomad` / `salad` |
 | `subgoal_mode` / `filter_mode` | `place_recognition` / `bayesian` |
 | `motion_model` | `odometry`。`legacy` で従来の移動更新 |
-| `odom_max_gap` / `odom_noise` | `0.2 s` / `0.1`。補間の最大間隔 / 並進量に対する予測標準偏差の比率 |
-| `subgoal_update` | `nearest`。`passage` で画像ゴールを記録位置の通過まで保持（odom、lookahead=1） |
-| `pass_threshold` / `pass_confirmations` | `0.5` / `2`。通過確率のしきい値 / 連続した新規画像数 |
-| `pass_local_mass` | `0.8`。最終到達時に終点と隣接ノードの所属区間に必要な全体確率 |
-| `final_goal_tolerance` | `0.5 m`。passageの最終到達を判定する経路進捗の許容幅 |
+| `local_pose` | `false`。`true`で局所2D姿勢と相対画像ゴールを診断出力し、RVizのImage Goalに方向・撮影方向・IDを表示。通常arrivalと、確定した救済でbeliefと大きく矛盾した場合にXY基準を更新。向きは維持。制御・画像選択には使わない |
+| `odom_max_gap` / `odom_noise` | `0.2 s` / `0.1`。補間の最大間隔 / 走行1mあたりの分散が`odom_noise²` m²となるノイズ係数 |
+| `subgoal_update` | `nearest`。`passage`は通過、`arrival`は目標ノード所属と記録位置への接近で中間画像を更新（odom、lookahead=1） |
+| `pass_threshold` / `pass_confirmations` | `0.5` / `2`。判定スコアのしきい値 / passage・救済・最終到達の連続新規画像数。arrivalの中間判定は1画像 |
+| `pass_local_mass` | `0.8`。通常切り替え・最終到達時に目標のメートル近傍へ必要な全体確率 |
+| `final_goal_tolerance` | `0.5 m`。全odomモードの最終到達エリアを判定する経路進捗の許容幅。角度条件なし。nearestも終点ノードIDだけでは到達にしない |
+| `goal_eval_position_tolerance` | `0.5 m`。arrivalの目標進捗許容幅 |
+| `goal_eval_yaw_tolerance` | 省略時はYAMLの`goal_eval_yaw_tolerance_deg: 20.0`を変換。明示指定はrad。方向診断用で、到達判定には使わない |
+| `goal_eval_neighborhood_radius` | `2.0 m`。周辺半径と前方救済の距離。位置許容幅以上にする |
+| `goal_recovery_distance` / `goal_recovery_threshold` | `4.0 m` / `0.8`。後方救済の距離 / 救済に必要な全体確率 |
 | `window_radius` | `3` |
 | `start_node_idx` / `goal_node_idx` | `0` / `-1`（末尾） |
 | `lookahead` / `close_threshold` | `1` / `3` |
@@ -154,10 +196,10 @@ bag記録のトピック一覧は自動改名しないため、トピックを�
 `navigate_whill.sh`と`src/config`の設定を使用する。
 `image_topic`は深度adapterの入力を指定する。PlaceNavのカメラ入力は`config/robots.yaml`で設定する。
 別の配置では`placenav_src`を実際の`navigate_whill.sh`があるディレクトリに変更する。
-サブゴール保持は `subgoal_update:=passage` で選択する。初回画像は即座に出し、
+サブゴール保持は `subgoal_update:=passage` / `arrival` で選択する。初回画像は即座に出し、
 VPR・Bayesianフィルタは共通。詳細は [オドメトリの説明](../../doc/TOPOMAP_ODOMETRY.md) を参照。
-中間ゴールの出力候補が推定現在ノードかその次から外れた場合は、
-「推定現在ノード＋1」（指定終点が上限）に選び直す。
+目標より前方2m・後方4m以上に確率が集中し、現在ノード近傍も確かなら、
+同じ候補を連続確認して「推定現在ノード＋1」（指定終点が上限）へ救済する。
 この救済は自己位置beliefを変更せず、追加のVPR推論も行わない。
 最終到達後はPlaceNavの推論を止め、到達通知を保持するためROSノードは存続する。
 TEBの終端停止は全モード共通で、遅れた経路・False通知では再開しない。

@@ -3,10 +3,12 @@
 import json
 import os
 from pathlib import Path
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 
 from roslaunch.config import load_config_default
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,11 +51,59 @@ class NavigationLaunchTest(unittest.TestCase):
         self.assertEqual(params['/placenav_teb_bridge/reference_mode'], 'latest')
         self.assertEqual(params['/placenav_runner/motion_model'], 'odometry')
         self.assertEqual(params['/placenav_runner/subgoal_update'], 'nearest')
+        self.assertIs(params['/placenav_runner/local_pose'], False)
         self.assertEqual(params['/placenav_runner/topomap_dir'], 'whill_odometry_tsukuba_3.5')
+        config, _ = self.load()
+        self.assertFalse(any(n.name == 'local_goal_visualizer' for n in config.nodes))
         self.assertEqual(params['/placenav_teb_bridge/path_timeout'], float(defaults['path_timeout']))
         self.assertEqual(params['/placenav_teb_bridge/TebLocalPlannerROS/shrink_horizon_backup'],
                          defaults['shrink_horizon_backup'] == 'true')
         self.assertEqual(params['/placenav_teb_bridge/comparison_profile'], 'current')
+
+    def test_real_and_debug_select_separate_tuning_files(self):
+        for launch, filename in [(LAUNCH, 'placenav.yaml'),
+                                 (ROOT/'launch/navigation_debug.launch', 'placenav_dev.yaml')]:
+            with self.subTest(launch=launch.name):
+                values = yaml.safe_load((ROOT/'config'/filename).read_text())
+                config = load_config_default([(str(launch), [])], 11311, verbose=False)
+                prefix = '/placenav_runner/'
+                self.assertEqual(Path(config.params[prefix+'placenav_config'].value).name, filename)
+                for name, value in values.items():
+                    self.assertEqual(config.params[prefix+name].value, value, name)
+                self.assertNotIn(prefix+'goal_eval_yaw_tolerance', config.params)
+                # Remove an earlier radian override when reusing the ROS master.
+                self.assertIn(prefix, config.clear_params)
+
+    def test_yaml_tuning_and_explicit_override_reach_navigation_command(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('yaml_session_runner', ROOT/'scripts/session_runner.py')
+        runner = importlib.util.module_from_spec(spec); spec.loader.exec_module(runner)
+        values = yaml.safe_load((ROOT/'config/placenav.yaml').read_text())
+        values.update(odom_noise=.25, pass_threshold=.7, lookahead=2,
+                      goal_eval_yaw_tolerance_deg=35.)
+        with tempfile.TemporaryDirectory(prefix='placenav-config-') as directory:
+            path = Path(directory)/'custom config.yaml'
+            path.write_text(yaml.safe_dump(values))
+            for launch in [LAUNCH, ROOT/'launch/navigation_debug.launch']:
+                for override in [False, True]:
+                    with self.subTest(launch=launch.name, override=override):
+                        options = ['placenav_config:='+str(path)]
+                        if override:
+                            options += ['odom_noise:=0.15', 'pass_threshold:=0.6',
+                                        'goal_eval_yaw_tolerance:=0.2']
+                        config = load_config_default([(str(launch), options)], 11311, verbose=False)
+                        prefix = '/placenav_runner/'
+                        params = {name[len(prefix):]: p.value for name, p in config.params.items()
+                                  if name.startswith(prefix)}
+                        params['placenav_src'] = str(ROOT.parent)
+                        command, _ = runner.navigation_command(params)
+                        import math
+                        expected = {'--odom-noise': .15 if override else .25,
+                                    '--pass-threshold': .6 if override else .7,
+                                    '--lookahead': 2,
+                                    '--goal-eval-yaw-tolerance': .2 if override else math.radians(35.)}
+                        for flag, value in expected.items():
+                            self.assertEqual(float(command[command.index(flag)+1]), value, flag)
 
     def test_frames_reach_gates_tf_batch_maps_teb_and_path_runner(self):
         config, params = self.load('global_frame:=test_odom', 'robot_base_frame:=test_base',
@@ -82,6 +132,7 @@ class NavigationLaunchTest(unittest.TestCase):
             self.assertEqual(params['/placenav_runner/'+key], value)
         topics = params['/session_recorder/diagnostic_topics']
         self.assertIn('/placenav_teb_bridge/diagnostics', topics)
+        self.assertIn('/toponav/goal_evaluation', params['/session_recorder/topics'])
         self.assertNotIn('/rwrc26/navigation_trace', topics)
         self.assertTrue(params['/session_recorder/diagnostics'])
 
@@ -117,6 +168,37 @@ class NavigationLaunchTest(unittest.TestCase):
         self.assertNotIn('/odom', topics)
         _, legacy = self.load('motion_model:=legacy')
         self.assertEqual(legacy['/placenav_runner/motion_model'], 'legacy')
+
+    def test_goal_evaluation_options_reach_both_launch_entry_points(self):
+        options = ['goal_eval_position_tolerance:=0.4', 'goal_eval_yaw_tolerance:=0.2',
+                   'goal_eval_neighborhood_radius:=3.0', 'subgoal_update:=arrival',
+                   'goal_recovery_distance:=5.0', 'goal_recovery_threshold:=0.9', 'local_pose:=true']
+        for launch in [LAUNCH, ROOT/'launch/navigation_debug.launch']:
+            config = load_config_default([(str(launch), options)], 11311, verbose=False)
+            for name, value in [('position_tolerance', .4), ('yaw_tolerance', .2),
+                                ('neighborhood_radius', 3.)]:
+                self.assertEqual(config.params['/placenav_runner/goal_eval_'+name].value, value)
+            for name, value in [('subgoal_update', 'arrival'), ('goal_recovery_distance', 5.),
+                                ('goal_recovery_threshold', .9), ('local_pose', True)]:
+                self.assertEqual(config.params['/placenav_runner/'+name].value, value)
+            self.assertEqual(sum(n.name == 'local_goal_visualizer' for n in config.nodes), 1)
+            self.assertEqual(config.params['/local_goal_visualizer/target_frame'].value, 'odom')
+
+    def test_debug_bag_start_is_seconds_into_the_bag(self):
+        import shlex
+        launch = ROOT/'launch/navigation_debug.launch'
+        for value in ['0', '420', '419.5']:
+            config = load_config_default([(str(launch), ['bag:=/tmp/example.bag',
+                'bag_start:='+value, 'bag_pause:=true', 'rviz:=false'])], 11311, verbose=False)
+            player = next(n for n in config.nodes if n.name == 'navigation_bag_playback')
+            args = shlex.split(player.args)
+            self.assertIn('--start='+value, args)
+            self.assertIn('--clock', args)
+            self.assertIn('--pause', args)
+            self.assertIs(config.params['/use_sim_time'].value, True)
+        for value in ['-1', 'nan', 'inf']:
+            with self.subTest(value=value), self.assertRaises(Exception):
+                load_config_default([(str(launch), ['bag_start:='+value])], 11311, verbose=False)
 
 
 if __name__ == '__main__':

@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -97,6 +98,29 @@ PY
                     'pass_local_mass', 'final_goal_tolerance'):
             self.assertEqual(getattr(args, key), params[key], key)
 
+    def test_goal_evaluation_options_reach_parser_and_reject_invalid_ranges(self):
+        directory = Path(os.environ.get('PLACENAV_TEST_SRC', Path(__file__).resolve().parents[2]))
+        spec = importlib.util.spec_from_file_location('goal_options_parser', directory/'placenav/parser.py')
+        parser = importlib.util.module_from_spec(spec);spec.loader.exec_module(parser)
+        options = dict(goal_eval_position_tolerance=.4, goal_eval_yaw_tolerance=.2,
+                       goal_eval_neighborhood_radius=3., subgoal_update='arrival',
+                       goal_recovery_distance=5., goal_recovery_threshold=.9, local_pose=True)
+        command, _ = runner.navigation_command(dict(placenav_src=str(directory), topomap_dir='route', **options))
+        argv = command[2:] + ['--robot', 'whill', '--robot-config-path', '/tmp/robots.yaml',
+            '--model-config-path', '/tmp/models.yaml', '--model-weight-dir', '/tmp/weights',
+            '--topomap-base-dir', '/tmp/maps']
+        with patch.object(sys, 'argv', ['navigate.py'] + argv):
+            args = parser.parse_args()
+        for key, value in options.items():
+            self.assertEqual(getattr(args, key), value)
+        for invalid in [dict(goal_eval_yaw_tolerance=4), dict(goal_eval_yaw_tolerance=float('nan')),
+                        dict(goal_eval_position_tolerance=-1), dict(goal_eval_neighborhood_radius=.1)]:
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                runner.navigation_command(dict(placenav_src=str(directory), topomap_dir='route', **invalid))
+        for invalid in [['--goal-eval-yaw-tolerance', '4'], ['--goal-eval-neighborhood-radius', '.1']]:
+            with patch.object(sys, 'argv', ['navigate.py'] + argv + invalid), self.assertRaises(SystemExit):
+                parser.parse_args()
+
     def test_invalid_motion_options_are_rejected(self):
         directory = self.root/'PlaceNav'; directory.mkdir(); (directory/'navigate_whill.sh').touch()
         for options in ({'motion_model': 'typo'}, {'odom_max_gap': 0},
@@ -105,9 +129,27 @@ PY
                         {'pass_threshold': 1.1}, {'pass_confirmations': 0},
                         {'pass_local_mass': float('nan')}, {'final_goal_tolerance': -1},
                         {'subgoal_update': 'passage', 'motion_model': 'legacy'},
-                        {'subgoal_update': 'passage', 'lookahead': 2}):
+                        {'subgoal_update': 'passage', 'lookahead': 2},
+                        {'subgoal_update': 'arrival', 'motion_model': 'legacy'},
+                        {'subgoal_update': 'arrival', 'lookahead': 2},
+                        {'goal_recovery_distance': 1}, {'goal_recovery_threshold': 0},
+                        {'local_pose': True, 'motion_model': 'legacy'}):
             with self.subTest(options=options), self.assertRaises(ValueError):
                 runner.navigation_command(dict(placenav_src=str(directory), topomap_dir='route', **options))
+
+    def test_yaml_degrees_are_converted_and_legacy_radians_take_priority(self):
+        directory = self.root/'PlaceNav'; directory.mkdir(); (directory/'navigate_whill.sh').touch()
+        base = dict(placenav_src=str(directory), topomap_dir='route')
+        for options, expected in [({}, math.radians(20.)),
+                                  ({'goal_eval_yaw_tolerance_deg': 35.}, math.radians(35.)),
+                                  ({'goal_eval_yaw_tolerance_deg': 35.,
+                                    'goal_eval_yaw_tolerance': .2}, .2)]:
+            with self.subTest(options=options):
+                command, _ = runner.navigation_command(dict(base, **options))
+                self.assertEqual(float(command[command.index('--goal-eval-yaw-tolerance')+1]), expected)
+        for degrees in [0., -20., 181., float('nan'), float('inf')]:
+            with self.subTest(degrees=degrees), self.assertRaises(ValueError):
+                runner.navigation_command(dict(base, goal_eval_yaw_tolerance_deg=degrees))
 
     def test_trace_capability_and_recording_follow_selected_checkout(self):
         directory = self.root/'PlaceNav'; (directory/'placenav').mkdir(parents=True)
@@ -157,6 +199,33 @@ Path('adapter.json').write_text(json.dumps(sys.argv[1:]))
         self.assertEqual(args[args.index('--source-frame')+1], 'test_base')
         self.assertEqual(args[args.index('--target-frame')+1], 'test_odom')
         self.assertEqual(args[args.index('--expected-waypoints')+1], '8')
+
+    def test_whill_script_prefers_built_messages_over_an_old_shell(self):
+        source = Path(os.environ.get('PLACENAV_TEST_SRC', Path(__file__).resolve().parents[2]))
+        workspace = self.root/'ws'
+        directory = workspace/'src/PlaceNav/src'
+        (directory/'placenav').mkdir(parents=True)
+        script = directory/'navigate_whill.sh'
+        script.write_text((source/'navigate_whill.sh').read_text())
+        old = self.root/'image_messages'
+        built = workspace/'install/placenav_viz_msgs/lib/python3/dist-packages'
+        for prefix, contents in [(old, '# Old image: no GoalEvaluation\n'),
+                                 (built, 'class GoalEvaluation: pass\n')]:
+            package = prefix/'placenav_viz_msgs'
+            (package/'msg').mkdir(parents=True)
+            (package/'__init__.py').touch()
+            (package/'msg/__init__.py').write_text(contents)
+        (directory/'placenav/navigate.py').write_text(
+            'import json,placenav_viz_msgs.msg as messages\n'
+            'from placenav_viz_msgs.msg import GoalEvaluation\n'
+            'print(json.dumps(messages.__file__))\n')
+        command = ['bash', str(script), '--topomap-dir', 'route',
+                   '--no-visualization', '--no-path-adapter']
+        env = dict(os.environ, PYTHONPATH=str(old))
+        result = subprocess.run(command, cwd=directory, env=env, check=True,
+                                capture_output=True, text=True, timeout=6)
+        self.assertEqual(Path(json.loads(result.stdout)).resolve(),
+                         (built/'placenav_viz_msgs/msg/__init__.py').resolve())
 
     def record_params(self, directory=None):
         return {'bag_dir': str(directory or self.root/'bags'), 'topics': ['/tf', '/tf', '/odom'],

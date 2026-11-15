@@ -1,5 +1,6 @@
-"""Goal decisions use the existing posterior without changing localization."""
+"""Metric goal selection: arrival, passage, debounce and explicit recovery."""
 import json
+import math
 from pathlib import Path
 import sys
 import tempfile
@@ -8,6 +9,7 @@ import unittest
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
+from placenav.goal_evaluation import GoalEvaluationConfig
 from placenav.place_recognition.odometry_motion import OdometryMotionModel
 from placenav.subgoal_selector import ProgressSubgoalSelector
 
@@ -15,18 +17,22 @@ from placenav.subgoal_selector import ProgressSubgoalSelector
 class SelectorTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        path = Path(self.temp.name)/'nodes.json'
-        names = [str(i)+'.jpg' for i in range(5)]
-        path.write_text(json.dumps(dict(
-            schema_version=1, units=dict(position='m', angle='rad'), child_frame_id='base_link',
-            nodes=[dict(id=i, image=name, pose=dict(x=3.5*i, y=0, yaw=0))
-                   for i, name in enumerate(names)])))
-        self.motion = OdometryMotionModel(path, names, noise=0)
-        self.motion.initialize(np.array([1., 0, 0, 0, 0]))
+        self.make_map([3.5*i for i in range(5)])
         self.selector = ProgressSubgoalSelector(self.motion, 4, mode='passage')
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def make_map(self, positions, yaws=None):
+        names = [str(i)+'.jpg' for i in range(len(positions))]
+        path = Path(self.temp.name)/'nodes.json'
+        yaws = yaws or [0]*len(positions)
+        path.write_text(json.dumps(dict(schema_version=1,
+            units=dict(position='m', angle='rad'), child_frame_id='base_link',
+            nodes=[dict(id=i, image=name, pose=dict(x=x, y=0, yaw=yaw))
+                   for i, (name, x, yaw) in enumerate(zip(names, positions, yaws))])))
+        self.motion = OdometryMotionModel(path, names, noise=0)
+        self.motion.initialize(np.ones(len(names))/len(names))
 
     def mass(self, *positions):
         self.motion.probability.fill(0)
@@ -34,15 +40,19 @@ class SelectorTest(unittest.TestCase):
             i = np.argmin(np.abs(self.motion.grid_s-position))
             self.motion.probability[i] += weight
 
-    def test_immediate_initial_goal_even_with_ambiguous_global_belief(self):
+    def test_initial_goal_immediate_even_with_ambiguous_global_belief(self):
         self.mass((0, .5), (14, .5))
-        self.assertEqual(self.selector.update(0, 1), (1, False))
+        for mode in ('nearest', 'passage', 'arrival'):
+            selector = ProgressSubgoalSelector(self.motion, 4, mode=mode)
+            self.assertEqual(selector.update(0, 1), (1, False))
 
-    def test_midpoint_and_closest_node_changes_do_not_advance_goal(self):
-        self.mass((0, 1));self.selector.update(0, 1)
-        self.mass((1.8, 1))
-        for stamp, closest in enumerate([1, 0, 1, 1], 2):
-            self.assertEqual(self.selector.update(closest, stamp), (1, False))
+    def test_midpoint_and_closest_changes_do_not_advance_retained_goals(self):
+        for mode in ('passage', 'arrival'):
+            selector = ProgressSubgoalSelector(self.motion, 4, mode=mode)
+            self.mass((0, 1));selector.update(0, 1)
+            self.mass((1.8, 1))
+            for stamp, closest in enumerate([1, 0, 1, 1], 2):
+                self.assertEqual(selector.update(closest, stamp), (1, False))
 
     def test_passage_requires_two_fresh_images_and_resets_after_failure(self):
         self.mass((0, 1));self.selector.update(0, 1)
@@ -50,65 +60,77 @@ class SelectorTest(unittest.TestCase):
         self.assertEqual(self.selector.update(1, 2), (1, False))
         self.assertEqual(self.selector.update(1, 2), (1, False))
         self.mass((3.4, 1));self.selector.update(1, 3)
-        self.mass((3.6, 1))
-        self.assertEqual(self.selector.update(1, 4), (1, False))
+        self.mass((3.6, 1));self.selector.update(1, 4)
         self.assertEqual(self.selector.update(1, 5), (2, False))
-        self.assertEqual(self.selector.update(0, 6), (1, False))
-        self.assertEqual(self.selector.status, 'RECOVERED')
+        self.assertEqual(self.selector.status, 'ADVANCED_PASSAGE')
+        self.assertEqual(self.selector.decision_goal_idx, 1)
+        self.assertEqual(self.selector.decision_score, 1)
 
-    def test_goal_left_behind_recovers_even_without_passage_confirmation(self):
+    def test_small_backward_id_jitter_does_not_change_held_goal(self):
+        self.mass((3.5, 1));self.selector.update(1, 1)  # Goal 2, 7 meters.
+        self.mass((3.1, 1))
+        for stamp in range(2, 7):
+            self.assertEqual(self.selector.update(0, stamp), (2, False))
+
+    def test_persistent_large_backward_error_recovers(self):
+        for mode in ('passage', 'arrival'):
+            selector = ProgressSubgoalSelector(self.motion, 4, mode=mode)
+            self.mass((7, 1));selector.update(2, 1)
+            self.mass((0, 1))
+            self.assertEqual(selector.update(0, 2), (3, False))
+            self.assertEqual(selector.status, 'RECOVERY_PENDING_BACKWARD')
+            self.assertEqual(selector.update(0, 2), (3, False))
+            self.assertEqual(selector.update(0, 3), (1, False))
+            self.assertEqual(selector.status, 'RECOVERED_BACKWARD')
+
+    def test_multimodal_far_tail_cannot_be_normal_passage_or_recovery(self):
         self.mass((0, 1));self.selector.update(0, 1)
-        # Node 2 is the mode, although less than half the mass has passed goal 1.
-        self.mass((0, .3), (3.4, .3), (7, .4))
-        self.assertEqual(self.selector.update(2, 2), (3, False))
-        self.assertEqual(self.selector.status, 'RECOVERED')
-        self.assertEqual(self.selector.count, 0)
+        for distribution in [((0, .3), (3.4, .3), (7, .4)),
+                             ((3.6, .55), (14, .45)),
+                             ((0, .4), (3.6, .2), (7, .2), (10.5, .2))]:
+            self.mass(*distribution)
+            for stamp in range(self.selector.last_stamp+1, self.selector.last_stamp+5):
+                self.assertEqual(self.selector.update(2, stamp), (1, False))
+                self.assertEqual(self.selector.status, 'REMOTE_BELIEF')
 
-    def test_goal_ahead_recovers_to_current_node_plus_one(self):
-        self.mass((7, 1));self.selector.update(2, 1)
-        self.mass((0, 1))
-        self.assertEqual(self.selector.update(0, 2), (1, False))
-        self.assertEqual(self.selector.status, 'RECOVERED')
-
-    def test_advanced_candidate_is_checked_before_output(self):
-        # The mode stays at node 0 while the global tail probability exceeds .5.
-        self.mass((0, .4), (3.6, .2), (7, .2), (10.5, .2))
-        self.selector.update(0, 1)
-        for stamp in range(2, 10):
-            self.assertEqual(self.selector.update(0, stamp), (1, False))
-        self.assertEqual(self.selector.status, 'RECOVERED')
-
-    def test_intermediate_passage_does_not_require_old_local_mass_gate(self):
+    def test_large_forward_jump_is_recovery_not_arrival(self):
         self.mass((0, 1));self.selector.update(0, 1)
-        self.mass((3.6, .55), (14, .45))
-        self.assertEqual(self.selector.update(1, 2), (1, False))
-        self.assertLess(self.selector.probabilities['local'], .8)
-        self.assertEqual(self.selector.update(1, 3), (2, False))
-        self.assertEqual(self.selector.status, 'ADVANCED')
-
-    def test_recovery_clears_confirmation_and_cannot_declare_final_arrival(self):
-        self.mass((0, 1));self.selector.update(0, 1)
-        self.mass((3.6, 1));self.selector.update(1, 2)
-        self.assertEqual(self.selector.count, 1)
         self.mass((14, 1))
+        self.assertEqual(self.selector.update(4, 2), (1, False))
         self.assertEqual(self.selector.update(4, 3), (4, False))
-        self.assertEqual(self.selector.status, 'RECOVERED')
+        self.assertEqual(self.selector.status, 'RECOVERED_FORWARD')
         self.assertEqual(self.selector.count, 0)
         self.assertEqual(self.selector.update(4, 3), (4, False))
         self.assertEqual(self.selector.update(4, 4), (4, False))
         self.assertEqual(self.selector.update(4, 5), (4, True))
 
+    def test_recovery_requires_same_candidate_and_resets_on_disagreement(self):
+        self.mass((0, 1));self.selector.update(0, 1)
+        self.mass((7, 1));self.selector.update(2, 2)
+        self.mass((10.5, 1));self.selector.update(3, 3)
+        self.mass((7, 1));self.selector.update(2, 4)
+        self.assertEqual(self.selector.subgoal, 1)
+        self.assertEqual(self.selector.update(2, 5), (3, False))
+
+    def test_recovery_requires_mass_near_candidate_not_only_a_high_argmax(self):
+        self.mass((0, 1));self.selector.update(0, 1)
+        self.mass((7, .5), (14, .5))
+        for stamp in range(2, 7):
+            self.assertEqual(self.selector.update(2, stamp), (1, False))
+            self.assertEqual(self.selector.recovery_count, 0)
+
     def test_final_goal_can_recover_back_before_arrival(self):
         self.mass((10.5, 1));self.selector.update(3, 1)
-        self.mass((3.5, 1))
-        self.assertEqual(self.selector.update(1, 2), (2, False))
-        self.assertEqual(self.selector.status, 'RECOVERED')
+        self.mass((3.5, 1));self.selector.update(1, 2)
+        self.assertEqual(self.selector.update(1, 3), (2, False))
+        self.assertEqual(self.selector.status, 'RECOVERED_BACKWARD')
 
-    def test_recovery_respects_configured_final_goal(self):
+    def test_recovery_never_exceeds_configured_final_goal(self):
         selector = ProgressSubgoalSelector(self.motion, 2, mode='passage')
         self.mass((0, 1));selector.update(0, 1)
         self.mass((14, 1))
-        for stamp in range(2, 6):
+        self.assertEqual(selector.update(4, 2), (1, False))
+        for stamp in range(3, 7):
             self.assertEqual(selector.update(4, stamp), (2, False))
 
     def test_confirmation_reset_and_clock_rewind_keep_goal(self):
@@ -119,58 +141,116 @@ class SelectorTest(unittest.TestCase):
         self.assertEqual(self.selector.update(1, 5), (1, False))
         self.assertEqual(self.selector.update(1, 6), (2, False))
 
-    def test_nearest_mode_keeps_original_image_selection(self):
-        selector = ProgressSubgoalSelector(self.motion, 4, mode='nearest')
+    def test_nearest_keeps_original_image_selection(self):
+        selector = ProgressSubgoalSelector(self.motion, 4)
         self.mass((0, 1))
         for stamp, closest in enumerate([0, 1, 0, 2], 1):
             self.assertEqual(selector.update(closest, stamp), (closest+1, False))
 
-    def test_passage_final_neighborhood_and_terminal_latch(self):
-        selector = ProgressSubgoalSelector(self.motion, 4, mode='passage')
-        self.mass((12.3, 1))  # End node may be nearest well before arrival.
-        for stamp in range(1, 4):
-            self.assertEqual(selector.update(4, stamp), (4, False))
-        self.mass((13.8, 1))
-        self.assertEqual(selector.update(4, 4), (4, False))
-        self.assertEqual(selector.update(4, 5), (4, True))
-        self.mass((0, 1))
-        self.assertEqual(selector.update(0, 6), (4, True))
+    def test_all_modes_final_position_confirmation_and_terminal_latch(self):
+        for mode in ('nearest', 'passage', 'arrival'):
+            selector = ProgressSubgoalSelector(self.motion, 4, mode=mode)
+            self.motion.heading_offset.fill(math.pi)
+            self.mass((12.3, 1))
+            for stamp in range(1, 4):
+                self.assertEqual(selector.update(4, stamp), (4, False))
+            self.mass((13.8, 1))
+            self.assertEqual(selector.update(4, 4), (4, False))
+            self.assertEqual(selector.update(4, 5), (4, True))
+            self.mass((0, 1))
+            self.assertEqual(selector.update(0, 6), (4, True))
 
-    def test_nearest_final_decision_is_unchanged(self):
-        selector = ProgressSubgoalSelector(self.motion, 4)
-        self.mass((12.3, 1))
-        self.assertEqual(selector.update(3, 1), (4, False))
-        self.assertEqual(selector.update(4, 2), (4, True))
-
-    def test_final_local_mass_gate_is_preserved(self):
+    def test_final_needs_global_local_mass_not_conditioned_mass(self):
         self.mass((14, .6), (0, .4))
         for stamp in range(1, 5):
             self.assertEqual(self.selector.update(4, stamp), (4, False))
             self.assertEqual(self.selector.status, 'REMOTE_BELIEF')
 
     def test_intermediate_final_goal_does_not_accept_farther_positions(self):
-        selector = ProgressSubgoalSelector(self.motion, 2, mode='passage')
-        self.mass((9, 1))
-        for stamp in range(1, 4):
-            self.assertEqual(selector.update(2, stamp), (2, False))
-        self.mass((6.8, 1));selector.update(2, 4)
-        self.assertEqual(selector.update(2, 5), (2, True))
+        for mode in ('nearest', 'passage', 'arrival'):
+            selector = ProgressSubgoalSelector(self.motion, 2, mode=mode)
+            self.mass((9, 1))
+            for stamp in range(1, 4):
+                self.assertEqual(selector.update(2, stamp), (2, False))
+            self.mass((6.8, 1));selector.update(2, 4)
+            self.assertEqual(selector.update(2, 5), (2, True))
 
-    def test_read_only_probabilities_use_global_mass(self):
+    def test_arrival_uses_one_fresh_posterior_without_a_heading_gate(self):
+        selector = ProgressSubgoalSelector(self.motion, 4, mode='arrival')
+        self.mass((0, 1));selector.update(0, 1)
+        self.mass((3.2, 1));self.motion.heading_offset.fill(math.pi/2)
+        self.assertEqual(selector.update(1, 2), (2, False))
+        self.assertEqual(selector.status, 'ADVANCED_ARRIVAL')
+        self.assertEqual(selector.decision_goal_idx, 1)
+        self.assertEqual(selector.decision_score, 1)
+        self.assertEqual(selector.count, 0)
+        self.mass((6.8, 1))
+        self.assertEqual(selector.update(2, 2), (2, False))
+        self.assertEqual(selector.update(2, 3), (3, False))
+
+    def test_final_arrival_ignores_heading_but_keeps_area_confirmation_and_latch(self):
+        selector = ProgressSubgoalSelector(self.motion, 4, mode='arrival')
+        self.mass((13.8, 1));self.motion.heading_offset.fill(math.pi/2)
+        self.assertEqual(selector.update(4, 1), (4, False))
+        self.assertEqual(selector.update(4, 1), (4, False))
+        self.mass((12.3, 1))
+        self.assertEqual(selector.update(4, 2), (4, False))
+        self.mass((13.8, 1))
+        self.assertEqual(selector.update(4, 3), (4, False))
+        self.motion.heading_offset.fill(-math.pi)
+        self.assertEqual(selector.update(4, 4), (4, True))
+        self.assertEqual(selector.update(4, 4), (4, True))
+        self.mass((0, 1))
+        self.assertEqual(selector.update(0, 5), (4, True))
+
+    def test_arrival_requires_global_neighborhood_mass(self):
+        selector = ProgressSubgoalSelector(self.motion, 4, mode='arrival')
+        self.mass((0, 1));selector.update(0, 1)
+        self.mass((3.5, .6), (14, .4))
+        for stamp in range(2, 5):
+            self.assertEqual(selector.update(1, stamp), (1, False))
+            self.assertEqual(selector.status, 'REMOTE_BELIEF')
+
+    def test_arrival_missed_during_avoidance_can_recover_forward(self):
+        selector = ProgressSubgoalSelector(self.motion, 4, mode='arrival')
+        self.mass((0, 1));selector.update(0, 1)
+        self.mass((7, 1));self.motion.heading_offset.fill(math.pi/2)
+        selector.update(2, 2)
+        self.assertEqual(selector.update(2, 3), (3, False))
+        self.assertEqual(selector.status, 'RECOVERED_FORWARD')
+
+    def test_dense_turn_does_not_advance_on_nearby_other_node_support(self):
+        self.make_map([0, .2, .4, 3.9, 7.4], [0, math.pi/2, math.pi, math.pi, math.pi])
+        selector = ProgressSubgoalSelector(self.motion, 4, mode='arrival')
+        self.mass((0, 1));selector.update(0, 1)
+        selector.update(0, 2);selector.update(0, 3)
+        self.assertEqual(selector.subgoal, 1)  # Position overlaps; target owner does not.
+        self.mass((.2, 1))
+        self.motion.heading_offset[:] = -self.motion.yaw
+        selector.update(1, 4)
+        self.assertEqual(selector.subgoal, 2)
+        selector.update(1, 4);selector.update(1, 5)
+        self.assertEqual(selector.subgoal, 2)
+        self.mass((.4, 1))
+        self.assertEqual(selector.update(2, 6), (3, False))
+
+    def test_selection_and_evaluation_do_not_change_localization(self):
         self.mass((3.6, .2), (14, .8))
-        original = self.motion.probability.copy();owners = self.motion.owner.copy()
-        info = self.motion.progress_probabilities(1)
-        self.assertAlmostEqual(info['passed'], 1)
-        self.assertAlmostEqual(info['local'], .2)
-        self.selector.update(0, 1);self.selector.update(1, 2)
-        np.testing.assert_array_equal(self.motion.probability, original)
-        np.testing.assert_array_equal(self.motion.owner, owners)
+        original = [x.copy() for x in (self.motion.probability, self.motion.grid_s,
+                                      self.motion.heading_offset, self.motion.owner)]
+        for mode in ('passage', 'arrival'):
+            selector = ProgressSubgoalSelector(self.motion, 4, mode=mode)
+            selector.update(0, 1);selector.update(1, 2)
+        for before, after in zip(original, (self.motion.probability, self.motion.grid_s,
+                                           self.motion.heading_offset, self.motion.owner)):
+            np.testing.assert_array_equal(before, after)
 
     def test_invalid_configuration_is_rejected(self):
         for options in [dict(mode='typo'), dict(mode='passage', lookahead=2),
-                        dict(threshold=0), dict(threshold=float('nan')),
-                        dict(min_local_mass=1.1), dict(confirmations=0),
-                        dict(final_tolerance=-1)]:
+                        dict(mode='arrival', lookahead=0), dict(threshold=0),
+                        dict(threshold=float('nan')), dict(min_local_mass=1.1),
+                        dict(confirmations=0), dict(final_tolerance=-1),
+                        dict(recovery_distance=1), dict(recovery_threshold=0)]:
             with self.subTest(options=options), self.assertRaises(ValueError):
                 ProgressSubgoalSelector(self.motion, 4, **options)
 

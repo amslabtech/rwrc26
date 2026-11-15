@@ -155,15 +155,28 @@ def parse_args():
     parser.add_argument('--odom-max-gap', type=positive_float, default=0.2,
                         help='Maximum bracketing odometry interval in seconds')
     parser.add_argument('--odom-noise', type=nonnegative_float, default=0.1,
-                        help='Along-route motion standard deviation / measured translation')
-    parser.add_argument('--subgoal-update', choices=['nearest', 'passage'], default='nearest',
-                        help='Keep nearest+lookahead or passage with current-node recovery')
+                        help='Along-route process std in meters per sqrt(meter travelled)')
+    parser.add_argument('--local-pose', action='store_true',
+                        help='Publish diagnostic-only local 2D pose and relative image goal')
+    parser.add_argument('--subgoal-update', choices=['nearest', 'passage', 'arrival'], default='nearest',
+                        help='Nearest+lookahead, retained passage, or target-node position arrival')
     parser.add_argument('--pass-threshold', type=probability, default=0.5)
-    parser.add_argument('--pass-confirmations', type=positive_int, default=2)
+    parser.add_argument('--pass-confirmations', type=positive_int, default=2,
+                        help='Fresh-image confirmations for passage, recovery and final stopping; '
+                             'intermediate arrival uses one posterior update')
     parser.add_argument('--pass-local-mass', type=probability, default=0.8,
-                        help='Required posterior mass on final goal and adjacent nodes')
+                        help='Required posterior mass in the metric goal neighborhood')
+    parser.add_argument('--goal-recovery-distance', type=positive_float, default=4.0,
+                        help='Backward discrepancy in route meters before goal recovery')
+    parser.add_argument('--goal-recovery-threshold', type=probability, default=0.8)
     parser.add_argument('--final-goal-tolerance', type=nonnegative_float, default=0.5,
-                        help='Final goal progress tolerance in meters (passage mode)')
+                        help='Final goal progress tolerance in meters (all odometry subgoal modes)')
+    parser.add_argument('--goal-eval-position-tolerance', type=positive_float, default=0.5,
+                        help='Arrival interval half-width in route meters')
+    parser.add_argument('--goal-eval-yaw-tolerance', type=positive_float, default=math.radians(20),
+                        help='Heading diagnostic tolerance in radians, at most pi; does not gate arrival')
+    parser.add_argument('--goal-eval-neighborhood-radius', type=positive_float, default=2.0,
+                        help='Goal neighborhood and forward recovery distance in route meters')
     parser.add_argument(
         "--transition-model-window-lower",
         default=-1,
@@ -211,11 +224,19 @@ def parse_args():
 
 
     args, _ = parser.parse_known_args()
+    if args.local_pose and args.motion_model != 'odometry':
+        parser.error('--local-pose requires --motion-model odometry')
+    if args.goal_eval_yaw_tolerance > math.pi:
+        parser.error('--goal-eval-yaw-tolerance must not exceed pi')
+    if args.goal_eval_neighborhood_radius < args.goal_eval_position_tolerance:
+        parser.error('--goal-eval-neighborhood-radius must be at least the position tolerance')
+    if args.goal_recovery_distance < args.goal_eval_neighborhood_radius:
+        parser.error('--goal-recovery-distance must cover the goal neighborhood')
     if args.motion_model == 'odometry' and (
             args.filter_mode != 'bayesian' or args.subgoal_mode != 'place_recognition'):
         parser.error('--motion-model odometry requires --filter-mode bayesian '
                      '--subgoal-mode place_recognition')
-    if args.subgoal_update == 'passage' and (
+    if args.subgoal_update != 'nearest' and (
             args.motion_model != 'odometry' or args.lookahead != 1):
-        parser.error('--subgoal-update passage requires --motion-model odometry --lookahead 1')
+        parser.error('--subgoal-update passage/arrival requires --motion-model odometry --lookahead 1')
     return args

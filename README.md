@@ -68,8 +68,9 @@ PlaceNavをROS 1 Noetic環境でWHILLへ統合し、つくばチャレンジに�
 ナビゲーションも `place_recognition + bayesian + odometry` が既定で、
 ライブodomを自己位置推定の移動更新に使用します。
 画像ゴールの選択は従来の `subgoal_update:=nearest` が既定です。
-`subgoal_update:=passage` で、記録位置の通過確率で画像を進める方式を試せます。
-画像ゴールが推定現在ノードかその次から外れた場合は、現在ノード＋1へ選び直します。
+`subgoal_update:=passage`は記録位置の通過、`subgoal_update:=arrival`は目標ノードへのbeliefの支持と記録位置への接近で中間画像を進めます。
+arrivalの中間判定は新規画像1回で行い、推定角度は診断に残します。最終到達は全モードで経路上の終点エリアと連続確認を使い、方向一致は要求しません。
+保持ゴールからのずれがメートル単位で続いた場合は、確認後に現在ノード＋1へ救済します。
 最終到達・停止通知を受けたTEBは全モードでゼロ速度を維持します。
 
 オドメトリ付きノード情報をJSONへ保存する新モード、距離指定、bagからの生成手順は
@@ -91,6 +92,20 @@ PlaceNavをROS 1 Noetic環境でWHILLへ統合し、つくばチャレンジに�
 - 正規化belief entropy
 
 これにより、ノード選択の飛び、前後移動、画像照合の曖昧さをrosbagから分析できます。
+
+odomモードでは、位置・向きの近似到達スコアを`/toponav/goal_evaluation`にも出力します。
+`passage`・`arrival`の切り替えと救済の理由も出力します。
+`local_pose:=true`で局所2D推定と相対ゴール姿勢の診断も出力できます。
+arrivalの通常到達時と、確定した救済でbeliefと局所位置が大きく矛盾する場合にXY基準を更新します。
+向きはodom追跡を継続し、制御への接続は未実装です。
+[局所姿勢の説明](doc/LOCAL_POSE.md)を参照してください。
+`/toponav/goal_evaluation`の見るべき項目、状態の意味、切り替え前後のID・スコアの読み方は
+[ゴール共通評価のデバッグガイド](doc/GOAL_EVALUATION.md#デバッグで最初に見る項目)を参照してください。
+同じドキュメントにビルド・引数・各スコアの制限も記載しています。
+
+launchの数値調整値は、実機では[placenav.yaml](src/rwrc26_bringup/config/placenav.yaml)、
+開発・bag再生では[placenav_dev.yaml](src/rwrc26_bringup/config/placenav_dev.yaml)を自動で読み込みます。
+明示した起動引数はYAMLより優先します。角度はYAMLでは度で指定できます。
 
 #### 可視化改善
 
@@ -148,6 +163,7 @@ roslaunch placenav_teb_bridge bridge.launch cmd_vel_topic:=/cmd_vel
 - `/toponav/viz_info`
 - `/placenav/gnm_path`
 - `/toponav/localization_diagnostics`
+- `/toponav/goal_evaluation`
 - `/toponav/reached_goal`
 - `/toponav/stop`
 

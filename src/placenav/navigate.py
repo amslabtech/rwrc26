@@ -24,13 +24,14 @@ from place_recognition.vpr_config import image_transform, database_signature
 from place_recognition.odometry_motion import OdometryHistory
 from placenav.topomap_odometry import OdomSample
 from placenav.subgoal_selector import ProgressSubgoalSelector
+from placenav.goal_evaluation import GoalEvaluationConfig, evaluate_goal
 
 import parser
 from utils import (to_numpy, load_model, read_image, get_image_transform,
                    waypoints_to_ros_msg, bridge, odometry_msg_to_numpy)
 
 # Visualization
-from placenav_viz_msgs.msg import Viz, LocalizationDiagnostics
+from placenav_viz_msgs.msg import Viz, LocalizationDiagnostics, GoalEvaluation
 
 class PlaceNavNode:
 
@@ -41,11 +42,15 @@ class PlaceNavNode:
             args: argparse.Namespace,
         ):
         self.motion_model = args.motion_model
+        self.local_pose_enabled = args.local_pose
         if self.motion_model == 'odometry' and not (
                 args.topomap_base_dir / args.topomap_dir / 'node_odometry.json').is_file():
             raise FileNotFoundError('Odometry motion requires node_odometry.json; '
                                     'use an odometry map or --motion-model legacy')
         self.odom_max_gap = args.odom_max_gap
+        self.goal_evaluation_config = GoalEvaluationConfig(
+            args.goal_eval_position_tolerance, args.goal_eval_yaw_tolerance,
+            args.goal_eval_neighborhood_radius)
         # Set device to cuda if requested and available
         if args.device == "cuda" and torch.cuda.is_available():
             rospy.loginfo("Using CUDA")
@@ -258,6 +263,7 @@ class PlaceNavNode:
         self.obs_lock = Lock()
         self.odom_lock = Lock()
         self.goal_selector = None
+        self.local_pose_tracker = None
         self._goal_reached = False
         self._terminal_stop_sent = False
         # max_v is a command limit; a manually recorded bag may move faster.
@@ -297,19 +303,24 @@ class PlaceNavNode:
             self.robot_config['toponav_viz_info_topic'],
             Viz,
             queue_size=1)
-        # publish subgoal images
-        self.subgoal_pub = rospy.Publisher(
-            "/toponav/subgoal_image",
-            Image,
-            queue_size=1,
-            latch=True
-        )
-        self._last_subgoal_idx = None
+        # # publish subgoal images
+        # self.subgoal_pub = rospy.Publisher(
+        #     "/toponav/subgoal_image",
+        #     Image,
+        #     queue_size=1,
+        #     latch=True
+        # )
+        # self._last_subgoal_idx = None
 
         self.localization_diagnostics_pub = rospy.Publisher(
             self.robot_config['localization_diagnostics_topic'],
             LocalizationDiagnostics,
             queue_size=1)
+        self.goal_evaluation_pub = rospy.Publisher(
+            '/toponav/goal_evaluation', GoalEvaluation, queue_size=1)
+        if self.local_pose_enabled:
+            from placenav_viz_msgs.msg import LocalGoalPose
+            self.local_pose_pub = rospy.Publisher('/toponav/local_goal_pose', LocalGoalPose, queue_size=1)
 
         rospy.init_node("PlaceNavNode", anonymous=False)
         rospy.on_shutdown(self.publish_terminal_stop)
@@ -360,6 +371,8 @@ class PlaceNavNode:
             epoch = self.odom_history.epoch
         if sample is not None and epoch != self._last_odom_epoch:
             self.place_recognition_querier.reset_odometry()
+            if self.local_pose_tracker is not None and self.local_pose_tracker.mean is not None:
+                self.local_pose_tracker.invalidate('ODOMETRY_DISCONTINUITY')
             if self.goal_selector is not None:
                 self.goal_selector.reset_confirmation()
             self._last_odom_epoch = epoch
@@ -394,7 +407,15 @@ class PlaceNavNode:
                 mode=args.subgoal_update, lookahead=args.lookahead,
                 threshold=args.pass_threshold, confirmations=args.pass_confirmations,
                 min_local_mass=args.pass_local_mass,
-                final_tolerance=args.final_goal_tolerance)
+                final_tolerance=args.final_goal_tolerance,
+                evaluation_config=self.goal_evaluation_config,
+                recovery_distance=args.goal_recovery_distance,
+                recovery_threshold=args.goal_recovery_threshold)
+            if self.local_pose_enabled:
+                from placenav.local_pose import LocalPoseConfig, LocalPoseTracker
+                self.local_pose_tracker = LocalPoseTracker(
+                    self.place_recognition_querier.motion,
+                    LocalPoseConfig(translation_noise=args.odom_noise))
 
         # Initialize iterative average calculation for runtime
         avg_runtime = 0
@@ -423,6 +444,8 @@ class PlaceNavNode:
                     if (self._last_localization_stamp is not None and
                             stamp_ns < self._last_localization_stamp):
                         self.place_recognition_querier.reset_odometry()
+                        if self.local_pose_tracker is not None:
+                            self.local_pose_tracker.invalidate('IMAGE_TIME_DISCONTINUITY')
                         self._last_odom_epoch = None
                     odometry = self._image_odometry(stamp_ns)
                     if odometry is None:
@@ -433,26 +456,21 @@ class PlaceNavNode:
                 # Cat the context images along the channel dimension
                 context = torch.cat([obs['img'] for obs in context], dim=1).to(self.device)
 
-                if (
-                    first_pass and
-                    args.subgoal_mode == 'place_recognition' and
-                    args.filter_mode == 'bayesian'
-                    ):
-                    # Initialize the belief distribution of the
-                    # Bayesian filter prior to first query
-                    self.place_recognition_querier.initialize_model(current_obs)
-                    first_pass = False
-                
                 if args.subgoal_mode == 'place_recognition':
                     
                     # Place recognition with Bayesian filter
                     if args.filter_mode == 'bayesian':
-                        if self.motion_model == 'odometry':
+                        if first_pass:
+                            closest_node_idx, score = self.place_recognition_querier.initialize_model(
+                                current_obs, odometry)
+                            first_pass = False
+                        elif self.motion_model == 'odometry':
                             closest_node_idx, score = self.place_recognition_querier.match(
                                 current_obs, odometry)
-                            self._last_localization_stamp = current_obs_timestamp.to_nsec()
                         else:
                             closest_node_idx, score = self.place_recognition_querier.match(current_obs)
+                        if self.motion_model == 'odometry':
+                            self._last_localization_stamp = current_obs_timestamp.to_nsec()
 
                     # Place recognition with sliding window filter
                     elif args.filter_mode == 'sliding_window':
@@ -473,10 +491,45 @@ class PlaceNavNode:
                                           subgoal_idx, self.goal_selector.status,
                                           self.goal_selector.probabilities)
                         if self.goal_selector.status == 'REMOTE_BELIEF':
-                            rospy.logwarn_throttle(5, 'Final goal held: belief outside goal neighborhood')
+                            rospy.logwarn_throttle(5, 'Goal held: belief outside metric goal neighborhood')
                     else:
                         subgoal_idx = min(closest_node_idx + args.lookahead, args.goal_node_idx)
                         reached_goal = closest_node_idx == args.goal_node_idx
+                    if self.motion_model == 'odometry':
+                        if self.local_pose_tracker is not None:
+                            from placenav.local_pose_ros import goal_pose_message
+                            self.local_pose_tracker.update(closest_node_idx, odometry, self._last_odom_epoch)
+                            if self.local_pose_tracker.correct_arrival(self.goal_selector):
+                                rospy.loginfo('Local pose XY anchor -> node %s; heading retained',
+                                              self.local_pose_tracker.anchor_node)
+                            elif self.local_pose_tracker.correct_recovery(self.goal_selector, closest_node_idx):
+                                rospy.logwarn('Local pose XY reference corrected near node %s after recovery; heading retained',
+                                              self.local_pose_tracker.anchor_node)
+                            self.local_pose_pub.publish(goal_pose_message(
+                                self.local_pose_tracker, closest_node_idx, subgoal_idx,
+                                current_obs_timestamp, self._last_odom_epoch))
+                        metrics = evaluate_goal(self.place_recognition_querier.motion,
+                                                subgoal_idx, self.goal_evaluation_config)
+                        evaluation_msg = GoalEvaluation(**metrics)
+                        evaluation_msg.query_timestamp = current_obs_timestamp
+                        evaluation_msg.current_node_idx = closest_node_idx
+                        evaluation_msg.subgoal_idx = subgoal_idx
+                        evaluation_msg.subgoal_update = args.subgoal_update
+                        evaluation_msg.odometry_epoch = self._last_odom_epoch
+                        evaluation_msg.position_tolerance = self.goal_evaluation_config.position_tolerance
+                        evaluation_msg.yaw_tolerance = self.goal_evaluation_config.yaw_tolerance
+                        evaluation_msg.neighborhood_radius = self.goal_evaluation_config.neighborhood_radius
+                        selector = self.goal_selector
+                        evaluation_msg.selection_status = selector.status
+                        evaluation_msg.decision_goal_idx = selector.decision_goal_idx
+                        evaluation_msg.decision_score = selector.decision_score
+                        evaluation_msg.confirmation_count = selector.count
+                        evaluation_msg.recovery_candidate_idx = (
+                            selector.recovery_candidate[0] if selector.recovery_candidate else -1)
+                        evaluation_msg.recovery_confirmation_count = selector.recovery_count
+                        evaluation_msg.recovery_forward_score = selector.probabilities['forward']
+                        evaluation_msg.recovery_backward_score = selector.probabilities['backward']
+                        self.goal_evaluation_pub.publish(evaluation_msg)
                     sg_img = self.topomap_images[subgoal_idx].to(self.device)
 
                     # Predict the waypoints to subgoal
@@ -571,16 +624,16 @@ class PlaceNavNode:
                     self.localization_diagnostics_pub.publish(diagnostics_msg)
                 self.viz_pub.publish(viz_msg)
 
-                # subgoal image publishing
-                if subgoal_idx != self._last_subgoal_idx:
-                    img_path = self.topomap_img_dir / self.topomap_filenames[subgoal_idx]
-                    img = read_image(img_path)
+                # # subgoal image publishing
+                # if subgoal_idx != self._last_subgoal_idx:
+                #     img_path = self.topomap_img_dir / self.topomap_filenames[subgoal_idx]
+                #     img = read_image(img_path)
 
-                    img_msg = bridge.cv2_to_imgmsg(img, encoding="rgb8")
-                    img_msg.header.stamp = current_obs_timestamp
-                    self.subgoal_pub.publish(img_msg)
+                #     img_msg = bridge.cv2_to_imgmsg(img, encoding="rgb8")
+                #     img_msg.header.stamp = current_obs_timestamp
+                #     self.subgoal_pub.publish(img_msg)
 
-                    self._last_subgoal_idx = subgoal_idx
+                #     self._last_subgoal_idx = subgoal_idx
 
                 if reached_goal:
                     self._goal_reached = True

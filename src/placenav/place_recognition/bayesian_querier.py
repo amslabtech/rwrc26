@@ -40,7 +40,7 @@ class PlaceRecognitionTopologicalFilter:
                 Path(gallery_img_dir) / 'node_odometry.json',
                 self.db_handler.get_filepaths(), noise=odom_noise)
 
-    def initialize_model(self, img):
+    def initialize_model(self, img, odometry=None):
         '''
         Initialize the belief distribution from the distance of the
         query descriptor to the database descriptors
@@ -63,7 +63,11 @@ class PlaceRecognitionTopologicalFilter:
         self.belief /= self.belief.sum()
         if self.motion is not None:
             self.motion.initialize(self.belief)
-        self.last_diagnostics = None
+            if odometry is not None:
+                self.motion.predict(odometry)
+        # This image has already supplied the first observation. Return its
+        # result instead of assimilating it again in the navigation loop.
+        return self._result(np.dot(self.descriptors, query_desc))
 
     def obs_lhood(self, descriptor: np.ndarray) -> np.ndarray:
         '''Observation likelihood of the query descriptor'''

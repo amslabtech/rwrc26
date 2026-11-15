@@ -13,6 +13,12 @@ fi
 export QT_X11_NO_MITSHM="${QT_X11_NO_MITSHM:-1}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# An already-open shell may still resolve the image's older message package.
+# Prefer the workspace build for navigation and its adapter/visualizer children.
+MESSAGE_PYTHON_DIR="${SCRIPT_DIR}/../../../install/placenav_viz_msgs/lib/python3/dist-packages"
+if [[ -d "${MESSAGE_PYTHON_DIR}/placenav_viz_msgs" ]]; then
+    export PYTHONPATH="${MESSAGE_PYTHON_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
+fi
 ROBOT_CONFIG="${SCRIPT_DIR}/config/robots.yaml"
 MODEL_CONFIG="${SCRIPT_DIR}/config/models.yaml"
 MODEL_WEIGHT_DIR="${SCRIPT_DIR}/model_weights"
@@ -26,6 +32,8 @@ usage()
       '  --wp-model gnm_large|vint|nomad (default: gnm_large)' \
       '  --motion-model legacy|odometry (default: odometry; requires node_odometry.json)' \
       '  --subgoal-update nearest|passage (default: nearest; passage includes current-node recovery)' \
+      '  --goal-eval-position-tolerance METERS --goal-eval-yaw-tolerance RADIANS' \
+      '  --goal-eval-neighborhood-radius METERS (diagnostics only; defaults: 0.5, 0.3491, 2.0)' \
       '' \
       'Starts inference and the GUI visualization. Use --no-visualization to suppress the GUI.' \
       'Starts the GNM Path adapter. Use --no-path-adapter to suppress it.' \

@@ -149,6 +149,14 @@ Visualization Manager:
       Topic: /placenav/gnm_path
       Unreliable: false
       Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /toponav/local_goal_markers
+      Name: Image Goal
+      Namespaces:
+        local_goal: true
+      Queue Size: 1
+      Value: true
     - Class: rviz/Marker
       Enabled: true
       Marker Topic: /placenav_teb_bridge/TebLocalPlannerROS/teb_markers

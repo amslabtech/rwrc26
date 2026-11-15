@@ -63,13 +63,18 @@ def navigation_command(params):
     command += ['--motion-model', motion,
                 '--odom-topic', str(params.get('odom_topic', '/odom')),
                 '--odom-max-gap', str(gap), '--odom-noise', str(noise)]
+    if params.get('local_pose', False):
+        if motion != 'odometry':
+            raise ValueError('local_pose requires odometry')
+        command.append('--local-pose')
     update = str(params.get('subgoal_update', 'nearest'))
-    if update not in ('nearest', 'passage'):
-        raise ValueError('subgoal_update must be nearest or passage')
-    if update == 'passage' and (motion != 'odometry' or int(params.get('lookahead', 1)) != 1):
-        raise ValueError('passage requires odometry and lookahead=1')
+    if update not in ('nearest', 'passage', 'arrival'):
+        raise ValueError('subgoal_update must be nearest, passage or arrival')
+    if update != 'nearest' and (motion != 'odometry' or int(params.get('lookahead', 1)) != 1):
+        raise ValueError('passage/arrival require odometry and lookahead=1')
     command += ['--subgoal-update', update]
     for name, default in [('pass_threshold', .5), ('pass_local_mass', .8),
+                          ('goal_recovery_threshold', .8),
                           ('final_goal_tolerance', .5)]:
         value = float(params.get(name, default))
         if not math.isfinite(value) or (value < 0 if name == 'final_goal_tolerance' else not 0 < value <= 1):
@@ -79,6 +84,24 @@ def navigation_command(params):
     if count < 1:
         raise ValueError('pass_confirmations must be positive')
     command += ['--pass-confirmations', str(count)]
+    # YAML uses readable degrees. Preserve the existing explicit radian override.
+    if 'goal_eval_yaw_tolerance' in params:
+        yaw_tolerance = float(params['goal_eval_yaw_tolerance'])
+    else:
+        yaw_tolerance = math.radians(float(params.get('goal_eval_yaw_tolerance_deg', 20.)))
+    evaluation = dict(goal_eval_position_tolerance=float(params.get('goal_eval_position_tolerance', .5)),
+                      goal_eval_yaw_tolerance=yaw_tolerance,
+                      goal_eval_neighborhood_radius=float(params.get('goal_eval_neighborhood_radius', 2.)))
+    if (any(not math.isfinite(v) or v <= 0 for v in evaluation.values()) or
+            evaluation['goal_eval_yaw_tolerance'] > math.pi or
+            evaluation['goal_eval_neighborhood_radius'] < evaluation['goal_eval_position_tolerance']):
+        raise ValueError('Invalid goal evaluation tolerances')
+    for name, value in evaluation.items():
+        command += ['--'+name.replace('_', '-'), str(value)]
+    recovery_distance = float(params.get('goal_recovery_distance', 4.))
+    if not math.isfinite(recovery_distance) or recovery_distance < evaluation['goal_eval_neighborhood_radius']:
+        raise ValueError('goal_recovery_distance must cover the goal neighborhood')
+    command += ['--goal-recovery-distance', str(recovery_distance)]
     size = params.get('img_size', [])
     if not isinstance(size, list) or (size and (len(size) != 2 or any(
             type(value) is not int or value <= 0 for value in size))):
