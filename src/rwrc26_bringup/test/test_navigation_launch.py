@@ -78,9 +78,6 @@ class NavigationLaunchTest(unittest.TestCase):
         for key, value in dict(start_node_idx=5, goal_node_idx=31, lookahead=2, nomad_seed=7,
                                img_size=[96, 96], recompute_place_recognition_db=True).items():
             self.assertEqual(params['/placenav_runner/'+key], value)
-        topics = params['/session_recorder/diagnostic_topics']
-        self.assertIn('/placenav_teb_bridge/diagnostics', topics)
-        self.assertNotIn('/rwrc26/navigation_trace', topics)
         self.assertTrue(params['/session_recorder/diagnostics'])
 
     def test_invalid_reference_controls_fail_before_nodes_start(self):

@@ -95,7 +95,7 @@ def recording_command(params, now=None):
     prefix = str(params.get('bag_prefix', ''))
     if not re.fullmatch(r'[A-Za-z0-9_-]*', prefix):
         raise ValueError('bag_prefix must be empty or contain only letters, digits, _ and -')
-    topics = list(dict.fromkeys(params['topics'] + params.get('diagnostic_topics', []) + params.get('comparison_topics', [])))
+    topics = list(dict.fromkeys(params['topics']))
     if params.get('diagnostics', False) and supports_navigation_trace(params.get('placenav_src', '')):
         topics = list(dict.fromkeys(topics + ['/rwrc26/navigation_metadata', '/rwrc26/navigation_trace',
                                              '/rwrc26/path_adapter_trace', '/rwrc26/teb_trace']))

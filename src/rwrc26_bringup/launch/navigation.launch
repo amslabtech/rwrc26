@@ -146,10 +146,6 @@
     <param name="bag_prefix" type="str" value="$(arg bag_prefix)"/>
     <param name="buffer_mb" value="$(arg bag_buffer_mb)"/>
     <rosparam command="load" file="$(arg record_topics)" param="topics"/>
-    <rosparam if="$(eval arg('comparison_profile') == 'matched')" command="load"
-      file="$(find rwrc26_bringup)/config/comparison_topics.yaml" param="comparison_topics"/>
-    <rosparam if="$(arg diagnostics)" command="load"
-      file="$(find rwrc26_bringup)/config/diagnostic_topics.yaml" param="diagnostic_topics"/>
   </node>
 
   <!-- Optional visualization-only second costmap instance. Gates/TF are shared.

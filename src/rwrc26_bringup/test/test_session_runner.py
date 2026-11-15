@@ -50,20 +50,14 @@ PY
         with self.assertRaises(ValueError):
             runner.navigation_command({'placenav_src': str(self.root), 'topomap_dir': 'route'})
 
-    def test_diagnostics_are_opt_in_and_recorded_without_losing_original_topics(self):
+    def test_diagnostics_are_opt_in_and_add_no_recorded_topics(self):
         directory=self.root/'PlaceNav'; directory.mkdir(); (directory/'navigate_whill.sh').touch()
         (directory/'placenav').mkdir()
         (directory/'placenav/parser.py').write_text("parser.add_argument('--trace-navigation', action='store_true')")
         command,_=runner.navigation_command(dict(placenav_src=str(directory),topomap_dir='route',diagnostics=True))
         self.assertIn('--trace-navigation',command)
-        params=self.record_params(); params['diagnostic_topics']=['/rwrc26/navigation_trace','/tf']
-        command,_,_=runner.recording_command(params)
-        topics=command[command.index('-O')+2:]
-        self.assertEqual(topics,['/tf','/odom','/rwrc26/navigation_trace'])
-        params['comparison_topics']=['/obstacles/comparison/batch_trace','/tf']
-        command,_,_=runner.recording_command(params)
-        self.assertEqual(command[command.index('-O')+2:],
-                         ['/tf','/odom','/rwrc26/navigation_trace','/obstacles/comparison/batch_trace'])
+        command,_,_=runner.recording_command(self.record_params())
+        self.assertEqual(command[command.index('-O')+2:],['/tf','/odom'])  # duplicates removed, nothing added
 
     def test_latest_checkout_receives_navigation_options_and_no_unsupported_trace(self):
         directory = Path(os.environ.get('PLACENAV_TEST_SRC', Path(__file__).resolve().parents[2]))

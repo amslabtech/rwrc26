@@ -129,9 +129,9 @@ bag記録のトピック一覧は自動改名しないため、トピックを�
 bagと`.session.json`の名前は日本時間の`YYYYMMDD_HHMMSS_ffffff`。
 JSONには有効な起動設定、TEB設定、統合パッケージとブリッジのソース・実行ファイルのSHA256を保存する。
 既存ファイルを上書きせず、`tsukuba`内とそこへのシンボリックリンクは保存先として拒否する。
-`matched`時は比較用点群・メタデータも記録する。Ctrl+C後はbagの確定を待つ。
+Ctrl+C後はbagの確定を待つ。
 
-`diagnostics:=true`ではTEBの`/placenav_teb_bridge/diagnostics`、状態、gate診断などを追加記録する。
+記録するトピックは`record_topics`（既定`config/record_topics.yaml`）だけで決まり、`diagnostics`や`comparison_profile`では増えない。
 現在のPlaceNavは`--trace-navigation`に未対応なので、その引数は渡さず警告を出す。
 対応する別版を`placenav_src`で指定した場合だけ、trace引数と`/rwrc26/*`の記録を追加する。
 診断の有無はモデル・参照方式を切り替えない。最新版TEBの診断配信自体は常時有効。
