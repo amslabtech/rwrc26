@@ -6,7 +6,12 @@ import torch
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from placenav.waypoint_backends import decode_actions, NoMaDAdapter
+from placenav.waypoint_backends import (
+    decode_actions, load_waypoint_backend, NoMaDAdapter)
+
+ROOT = Path(__file__).resolve().parents[1]
+OMNIVLA_SOURCES = ROOT / "src/model_weights/waypoint/sources/OmniVLA/inference"
+HAS_OMNIVLA = (OMNIVLA_SOURCES / "model_omnivla_edge.py").is_file()
 
 
 class FakeNoMaD(torch.nn.Module):
@@ -40,6 +45,59 @@ class WaypointTests(unittest.TestCase):
         self.assertEqual(conf["vint"]["len_traj_pred"], 5)
         self.assertEqual(conf["nomad"]["len_traj_pred"], 8)
         self.assertEqual(conf["nomad"]["image_size"], [96, 96])
+
+    def test_omnivla_edge_config(self):
+        with (ROOT / "src/config/models.yaml").open() as f:
+            conf = yaml.safe_load(f)["omnivla_edge"]
+        self.assertEqual(conf["image_size"], [96, 96])
+        self.assertEqual((conf["context_size"], conf["len_traj_pred"]), (5, 8))
+        self.assertEqual(conf["metric_scale"], 0.1)  # numeric: fixed metres per unit
+        self.assertTrue(conf["learn_angle"])
+
+
+WEIGHTS = ROOT / "src/model_weights/waypoint/omnivla_edge.pth"
+
+
+# Real weights are required: a randomly initialised network ends in ReLU and
+# outputs a constant, which would make every sensitivity check below vacuous.
+@unittest.skipUnless(HAS_OMNIVLA and WEIGHTS.is_file() and torch.cuda.is_available(),
+                     "needs CUDA and src/prepare_waypoint.py --models omnivla_edge")
+class OmniVLAEdgeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        with (ROOT / "src/config/models.yaml").open() as f:
+            conf = yaml.safe_load(f)["omnivla_edge"]
+        cls.adapter = load_waypoint_backend(WEIGHTS, conf, "cuda")
+        torch.manual_seed(0)
+        cls.obs = torch.randn(2, 18, 96, 96).cuda()
+        cls.goal = torch.randn(2, 3, 96, 96).cuda()
+
+    def raw(self, modality, pose, text):
+        ids = torch.full((2,), modality, dtype=torch.long, device="cuda")
+        with torch.no_grad():
+            action, dist, _ = self.adapter.model(
+                self.obs, pose, torch.zeros(2, 9, 96, 96).cuda(), self.goal, ids, text,
+                torch.zeros(2, 3, 224, 224).cuda())
+        return action
+
+    def test_shape_and_unit_heading(self):
+        with torch.no_grad():
+            dist, action = self.adapter(self.obs, self.goal)
+        self.assertEqual(action.shape, (2, 8, 4))
+        self.assertEqual(dist.shape, (2, 1))
+        self.assertTrue(torch.isfinite(action).all() and torch.isfinite(dist).all())
+        torch.testing.assert_close(action[..., 2:].norm(dim=-1), torch.ones(2, 8, device="cuda"))
+
+    def test_unused_modalities_cannot_influence_goal_image_mode(self):
+        """Zeros for pose/map/language are exact stand-ins: the network masks them."""
+        with torch.no_grad():
+            _, action = self.adapter(self.obs, self.goal)
+        noisy = self.raw(6, torch.randn(2, 4).cuda(), torch.randn(2, 512).cuda())
+        torch.testing.assert_close(action, noisy)
+        # Negative control: a mode that does read the goal pose must react to it.
+        zero = self.raw(4, torch.zeros(2, 4).cuda(), torch.zeros(2, 512).cuda())
+        moved = self.raw(4, torch.randn(2, 4).cuda() * 20, torch.zeros(2, 512).cuda())
+        self.assertFalse(torch.allclose(zero, moved), "control failed: pose mode ignores the pose")
 
 
 if __name__ == "__main__":
