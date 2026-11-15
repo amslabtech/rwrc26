@@ -144,7 +144,8 @@ roslaunch rwrc26_bringup navigation_debug.launch \
 ```
 
 既定は `motion_model:=odometry`。CLIの既定も `place_recognition + bayesian + odometry`。
-`motion_model:=legacy`（CLIは `--motion-model legacy`）で従来の固定ノード窓による移動更新を選択する。
+`motion_model:=legacy subgoal_update:=nearest local_pose:=false`
+（単独CLIは `--motion-model legacy`）で従来の固定ノード窓による移動更新を選択する。
 `sliding_window` や `temporal_distance` を使う場合も `--motion-model legacy` を明示する。
 launchの既定地図は `whill_odometry_tsukuba_3.5`。別の地図は `topomap_dir` で指定する。
 地図画像と対応する `node_odometry.json` が必要で、不足時は起動エラーになる。
@@ -188,9 +189,13 @@ VOも同じ条件の連続した入力を用意すればトピックを変更し
 
 ## 画像サブゴールの切り替えと救済
 
-`subgoal_update:=nearest`が既定で、中間画像は従来どおり
+実機・debug launchは`subgoal_update:=arrival local_pose:=true`が既定。
+ノード付近への到達で画像を更新し、局所XY基準を補正する。
+`subgoal_update:=nearest`を指定すると、中間画像は従来どおり
 `min(closest_node_idx + lookahead, goal_node_idx)`を使う。
 `passage` / `arrival`は`motion_model:=odometry`、`lookahead:=1`で選択できる。
+単独CLIの既定は従来の`nearest`、局所姿勢出力なしのまま。launchと同じ構成は
+`--subgoal-update arrival --local-pose`で指定する。
 
 ```bash
 roslaunch rwrc26_bringup navigation_debug.launch \
@@ -209,7 +214,7 @@ arrivalの中間判定は新規画像1回で行う。観測更新のownerは中�
 
 | launch引数 | 既定値・意味 |
 |---|---|
-| `subgoal_update` | `nearest` / `passage` / `arrival` |
+| `subgoal_update` | launchの既定は`arrival`。`nearest` / `passage`も選択可能 |
 | `pass_threshold` | `0.5`。全体の事後確率に対する通過・到達しきい値 |
 | `pass_confirmations` | `2`。passage・救済・最終到達で確認する連続新規画像数。arrivalの中間判定は1画像 |
 | `pass_local_mass` | `0.8`。通常切り替え・最終到達に必要な目標近傍の確率 |

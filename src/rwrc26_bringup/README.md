@@ -81,7 +81,8 @@ ROSコンテナ内で実行する。深度コンテナは `restart: unless-stopp
 debug launch 自体はこのコンテナを起動しない。
 
 自己位置推定の移動更新はライブodomを使う `motion_model:=odometry` が既定。
-`node_odometry.json` のある地図を指定する。従来の画像マップには `motion_model:=legacy` を指定する。
+`node_odometry.json` のある地図を指定する。従来の画像マップには
+`motion_model:=legacy subgoal_update:=nearest local_pose:=false`を指定する。
 入力・調整項目は [オドメトリ付きマップ](../../doc/TOPOMAP_ODOMETRY.md) を参照する。
 
 ```bash
@@ -170,9 +171,9 @@ roslaunch rwrc26_bringup navigation_debug.launch \
 | `wp_model` / `pr_model` | `nomad` / `salad` |
 | `subgoal_mode` / `filter_mode` | `place_recognition` / `bayesian` |
 | `motion_model` | `odometry`。`legacy` で従来の移動更新 |
-| `local_pose` | `false`。`true`で局所2D姿勢と相対画像ゴールを診断出力し、RVizのImage Goalに方向・撮影方向・IDを表示。通常arrivalと、確定した救済でbeliefと大きく矛盾した場合にXY基準を更新。向きは維持。制御・画像選択には使わない |
+| `local_pose` | `true`。局所2D姿勢と相対画像ゴールを診断出力し、RVizのImage Goalに方向・撮影方向・IDを表示。`false`で無効。通常arrivalと、確定した救済でbeliefと大きく矛盾した場合にXY基準を更新。向きは維持。制御・画像選択には使わない |
 | `odom_max_gap` / `odom_noise` | `0.2 s` / `0.1`。補間の最大間隔 / 走行1mあたりの分散が`odom_noise²` m²となるノイズ係数 |
-| `subgoal_update` | `nearest`。`passage`は通過、`arrival`は目標ノード所属と記録位置への接近で中間画像を更新（odom、lookahead=1） |
+| `subgoal_update` | `arrival`。目標ノード所属と記録位置への接近で中間画像を更新（odom、lookahead=1）。`passage`は通過、`nearest`は現在ノード＋先読みで選択 |
 | `pass_threshold` / `pass_confirmations` | `0.5` / `2`。判定スコアのしきい値 / passage・救済・最終到達の連続新規画像数。arrivalの中間判定は1画像 |
 | `pass_local_mass` | `0.8`。通常切り替え・最終到達時に目標のメートル近傍へ必要な全体確率 |
 | `final_goal_tolerance` | `0.5 m`。全odomモードの最終到達エリアを判定する経路進捗の許容幅。角度条件なし。nearestも終点ノードIDだけでは到達にしない |
@@ -196,7 +197,12 @@ roslaunch rwrc26_bringup navigation_debug.launch \
 `navigate_whill.sh`と`src/config`の設定を使用する。
 `image_topic`は深度adapterの入力を指定する。PlaceNavのカメラ入力は`config/robots.yaml`で設定する。
 別の配置では`placenav_src`を実際の`navigate_whill.sh`があるディレクトリに変更する。
-サブゴール保持は `subgoal_update:=passage` / `arrival` で選択する。初回画像は即座に出し、
+実機・debugとも既定は`subgoal_update:=arrival local_pose:=true`。
+相対ゴールポーズのための通常到達時XY補正を使う構成としている。
+`passage`は画像IDの順序が安定したbag検証結果があるが、通常通過時のXY補正は行わない。
+`arrival`には密集ノードで単独ノードへの支持が不足し、救済で画像を飛び越す場合が残る。
+`subgoal_update:=passage` / `nearest`も明示して比較できる。
+初回画像は即座に出し、
 VPR・Bayesianフィルタは共通。詳細は [オドメトリの説明](../../doc/TOPOMAP_ODOMETRY.md) を参照。
 目標より前方2m・後方4m以上に確率が集中し、現在ノード近傍も確かなら、
 同じ候補を連続確認して「推定現在ノード＋1」（指定終点が上限）へ救済する。

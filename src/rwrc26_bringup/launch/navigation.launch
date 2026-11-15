@@ -17,7 +17,7 @@
   <arg name="odom_max_gap" default=""/>
   <arg name="odom_noise" default=""/>
   <arg name="local_pose" default="true"/>
-  <arg name="subgoal_update" default="nearest"/>
+  <arg name="subgoal_update" default="arrival"/>
   <arg name="pass_threshold" default=""/>
   <arg name="pass_confirmations" default=""/>
   <arg name="pass_local_mass" default=""/>

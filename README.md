@@ -67,7 +67,9 @@ PlaceNavをROS 1 Noetic環境でWHILLへ統合し、つくばチャレンジに�
 地図生成はオドメトリ付きJSONを保存するモードが既定です。
 ナビゲーションも `place_recognition + bayesian + odometry` が既定で、
 ライブodomを自己位置推定の移動更新に使用します。
-画像ゴールの選択は従来の `subgoal_update:=nearest` が既定です。
+実機・debug launchでは `subgoal_update:=arrival local_pose:=true` が既定です。
+ノード付近への到達で画像を更新し、局所XY基準を補正して相対ゴールポーズを出力します。
+`subgoal_update:=nearest`で従来の現在ノード＋先読み方式も選べます。
 `subgoal_update:=passage`は記録位置の通過、`subgoal_update:=arrival`は目標ノードへのbeliefの支持と記録位置への接近で中間画像を進めます。
 arrivalの中間判定は新規画像1回で行い、推定角度は診断に残します。最終到達は全モードで経路上の終点エリアと連続確認を使い、方向一致は要求しません。
 保持ゴールからのずれがメートル単位で続いた場合は、確認後に現在ノード＋1へ救済します。
@@ -76,7 +78,7 @@ arrivalの中間判定は新規画像1回で行い、推定角度は診断に残
 オドメトリ付きノード情報をJSONへ保存する新モード、距離指定、bagからの生成手順は
 [オドメトリ付きトポロジカルマップ](doc/TOPOMAP_ODOMETRY.md)を参照してください。
 従来形式の生成は `--map-mode legacy`、従来のナビゲーションは `--motion-model legacy`
-（launchでは `motion_model:=legacy`）を明示して使用できます。
+（launchでは `motion_model:=legacy subgoal_update:=nearest local_pose:=false`）を明示して使用できます。
 
 #### Place Recognition診断
 
@@ -95,7 +97,8 @@ arrivalの中間判定は新規画像1回で行い、推定角度は診断に残
 
 odomモードでは、位置・向きの近似到達スコアを`/toponav/goal_evaluation`にも出力します。
 `passage`・`arrival`の切り替えと救済の理由も出力します。
-`local_pose:=true`で局所2D推定と相対ゴール姿勢の診断も出力できます。
+launchでは既定の`local_pose:=true`で局所2D推定と相対ゴール姿勢の診断も出力します。
+`local_pose:=false`で無効にできます。
 arrivalの通常到達時と、確定した救済でbeliefと局所位置が大きく矛盾する場合にXY基準を更新します。
 向きはodom追跡を継続し、制御への接続は未実装です。
 [局所姿勢の説明](doc/LOCAL_POSE.md)を参照してください。

@@ -50,11 +50,21 @@ class NavigationLaunchTest(unittest.TestCase):
         # Navigation intentionally uses latest; standalone bridge uses state_machine.
         self.assertEqual(params['/placenav_teb_bridge/reference_mode'], 'latest')
         self.assertEqual(params['/placenav_runner/motion_model'], 'odometry')
-        self.assertEqual(params['/placenav_runner/subgoal_update'], 'nearest')
-        self.assertIs(params['/placenav_runner/local_pose'], False)
+        self.assertEqual(params['/placenav_runner/subgoal_update'], 'arrival')
+        self.assertIs(params['/placenav_runner/local_pose'], True)
         self.assertEqual(params['/placenav_runner/topomap_dir'], 'whill_odometry_tsukuba_3.5')
         config, _ = self.load()
-        self.assertFalse(any(n.name == 'local_goal_visualizer' for n in config.nodes))
+        self.assertEqual(sum(n.name == 'local_goal_visualizer' for n in config.nodes), 1)
+        for launch in [LAUNCH, ROOT/'launch/navigation_debug.launch']:
+            config = load_config_default([(str(launch), [])], 11311, verbose=False)
+            self.assertIs(config.params['/placenav_runner/local_pose'].value, True)
+            self.assertEqual(config.params['/placenav_runner/subgoal_update'].value, 'arrival')
+            self.assertEqual(sum(n.name == 'local_goal_visualizer' for n in config.nodes), 1)
+            config = load_config_default([(str(launch), ['local_pose:=false',
+                'subgoal_update:=nearest'])], 11311, verbose=False)
+            self.assertIs(config.params['/placenav_runner/local_pose'].value, False)
+            self.assertEqual(config.params['/placenav_runner/subgoal_update'].value, 'nearest')
+            self.assertFalse(any(n.name == 'local_goal_visualizer' for n in config.nodes))
         self.assertEqual(params['/placenav_teb_bridge/path_timeout'], float(defaults['path_timeout']))
         self.assertEqual(params['/placenav_teb_bridge/TebLocalPlannerROS/shrink_horizon_backup'],
                          defaults['shrink_horizon_backup'] == 'true')
@@ -87,7 +97,7 @@ class NavigationLaunchTest(unittest.TestCase):
             for launch in [LAUNCH, ROOT/'launch/navigation_debug.launch']:
                 for override in [False, True]:
                     with self.subTest(launch=launch.name, override=override):
-                        options = ['placenav_config:='+str(path)]
+                        options = ['placenav_config:='+str(path), 'subgoal_update:=nearest']
                         if override:
                             options += ['odom_noise:=0.15', 'pass_threshold:=0.6',
                                         'goal_eval_yaw_tolerance:=0.2']
@@ -126,6 +136,7 @@ class NavigationLaunchTest(unittest.TestCase):
 
     def test_navigation_tuning_and_recording_parameters(self):
         _, params = self.load('start_node_idx:=5', 'goal_node_idx:=31', 'lookahead:=2', 'nomad_seed:=7',
+                              'subgoal_update:=nearest',
                               'img_size:=[96,96]', 'recompute_place_recognition_db:=true', 'diagnostics:=true')
         for key, value in dict(start_node_idx=5, goal_node_idx=31, lookahead=2, nomad_seed=7,
                                img_size=[96, 96], recompute_place_recognition_db=True).items():
@@ -166,7 +177,7 @@ class NavigationLaunchTest(unittest.TestCase):
         topics = shlex.split(player.args)[shlex.split(player.args).index('--topics')+1:]
         self.assertIn('/vo/odom', topics)
         self.assertNotIn('/odom', topics)
-        _, legacy = self.load('motion_model:=legacy')
+        _, legacy = self.load('motion_model:=legacy', 'subgoal_update:=nearest', 'local_pose:=false')
         self.assertEqual(legacy['/placenav_runner/motion_model'], 'legacy')
 
     def test_goal_evaluation_options_reach_both_launch_entry_points(self):

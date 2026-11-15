@@ -4,6 +4,8 @@
 `/toponav/goal_evaluation` (`placenav_viz_msgs/GoalEvaluation`) へ配信する。
 `nearest` / `passage` / `arrival`で同じ評価を使う。
 `passage`は記録位置の通過、`arrival`は目標ノードへのbeliefの支持と記録位置への接近で中間画像を切り替える。
+実機・debug launchの既定は`subgoal_update:=arrival local_pose:=true`。
+通常到達時の局所XY補正を使い、相対ゴールポーズを出力する構成としている。
 VPRの観測用ownerは中点方式のまま。局所2D推定は[第3段階の診断](LOCAL_POSE.md)として追加した。
 局所2D診断には通常arrival時のXY基準補正を追加した。向きは維持し、この補正をbeliefへ戻さない。
 制御への相対ゴール接続は未実装。

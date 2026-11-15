@@ -2,11 +2,13 @@
 
 `local_pose:=true`で、1個の平面姿勢 `(x, y, yaw)` と3×3共分散を保持し、
 選択した画像ノードへの相対姿勢を`/toponav/local_goal_pose`
-（`placenav_viz_msgs/LocalGoalPose`）へ出力する。既定は無効。
+（`placenav_viz_msgs/LocalGoalPose`）へ出力する。実機・debug launchでは既定で有効。
+`local_pose:=false`で無効にできる。単独CLIでは`--local-pose`を明示する。
 全ノードにガウス分布を持つ実装ではない。
 
 VPR・1D belief・サブゴール更新・速度指令へこの推定を戻す処理はない。
 `subgoal_update:=arrival`の通常到達時に、到達したノードの記録XYへ現在位置を合わせる。
+実機・debug launchでは、このXY補正を使う`arrival`も既定とする。
 向きはリセットせず、odomによる追跡を継続する。追加の起動引数はない。
 `arrival` / `passage`のリカバリー確定時には、局所位置とbeliefが大きく矛盾する場合だけ
 XY基準を補正する。条件と制限は後述。
