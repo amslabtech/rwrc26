@@ -45,7 +45,9 @@ class NavigationLaunchTest(unittest.TestCase):
         _, params = self.load()
         bridge = ET.parse(ROOT.parent/'placenav_teb_bridge/launch/bridge.launch').getroot()
         defaults = {arg.attrib['name']: arg.attrib.get('default') for arg in bridge.findall('arg')}
-        self.assertEqual(params['/placenav_teb_bridge/reference_mode'], defaults['reference_mode'])
+        # Deliberate difference: navigation.launch follows the latest path by default.
+        self.assertEqual(defaults['reference_mode'], 'state_machine')
+        self.assertEqual(params['/placenav_teb_bridge/reference_mode'], 'latest')
         self.assertEqual(params['/placenav_teb_bridge/path_timeout'], float(defaults['path_timeout']))
         self.assertEqual(params['/placenav_teb_bridge/TebLocalPlannerROS/shrink_horizon_backup'],
                          defaults['shrink_horizon_backup'] == 'true')

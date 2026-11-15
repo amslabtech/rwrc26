@@ -61,7 +61,7 @@ roslaunch rwrc26_bringup navigation.launch \
 
 | 引数 | 既定値 | 反映先・意味 |
 |---|---|---|
-| `reference_mode` | `state_machine` | TEBブリッジの参照方式。`latest`も選択可能 |
+| `reference_mode` | `latest` | TEBブリッジの参照方式。`state_machine`・`avoidance_commit`も選択可能。`bridge.launch`単体の既定値は`state_machine` |
 | `path_timeout` | `0.0` | 有効なPathの受信間隔上限、秒。0は無効 |
 | `shrink_horizon_backup` | `true` | `TebLocalPlannerROS/shrink_horizon_backup` |
 | `global_frame` | `odom` | 点群gate・観測区間・コストマップ・TEB・経路adapter・RVizの共通フレーム |
