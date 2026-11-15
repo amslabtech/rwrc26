@@ -107,6 +107,7 @@
   </node>
 
   <node pkg="rwrc26_bringup" type="session_runner.py" name="placenav_runner" output="screen" required="true">
+    <env name="OPENBLAS_NUM_THREADS" value="1"/>
     <param name="role" value="navigation"/>
     <param name="placenav_src" value="$(arg placenav_src)"/>
     <param name="topomap_dir" value="$(arg topomap_dir)"/>
