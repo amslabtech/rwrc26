@@ -23,6 +23,7 @@ from place_recognition.vpr_config import image_transform, database_signature
 
 import parser
 from utils import to_numpy, load_model, read_image, get_image_transform, waypoints_to_ros_msg, bridge
+from frame_gate import FrameGate
 
 # Visualization
 from placenav_viz_msgs.msg import Viz, LocalizationDiagnostics
@@ -243,6 +244,8 @@ class PlaceNavNode:
 
     def _setup_ros(self):
         self.obs_lock = Lock()
+        # Inference starts when a frame arrives (no 0-200 ms wait for a free-running timer).
+        self.frame_gate = FrameGate(self.robot_config['frame_rate'], is_shutdown=rospy.is_shutdown)
 
         obs_sub = rospy.Subscriber(
             self.robot_config['camera_topic'],
@@ -288,6 +291,7 @@ class PlaceNavNode:
             else:            
                 self.context_queue.pop(0)
                 self.context_queue.append({'timestamp': msg.header.stamp, 'img': img, 'vpr_img': vpr_img})
+        self.frame_gate.notify()
 
     def stop_callback(self, msg: Bool):
         if msg.data:
@@ -308,7 +312,7 @@ class PlaceNavNode:
 
         first_pass = True
         reached_goal = False
-        rate = rospy.Rate(self.robot_config['frame_rate'])
+        rate = self.frame_gate  # rate.sleep() = wait for the next camera frame
         while not rospy.is_shutdown():
 
             start_time = time.time()
@@ -448,6 +452,8 @@ class PlaceNavNode:
                     return
                 
                 rate.sleep()
+            else:
+                rate.sleep()  # context not filled yet: wait for frames instead of spinning
 
 if __name__ == '__main__':
     args = parser.parse_args()

@@ -14,7 +14,7 @@ parrot (x86, Internet)                       Xavier (JetPack 5.0.2 のまま, of
  setup_xavier.sh runtime deb 取得 ───┼─ LAN ─▶ setup_xavier_host.sh: fstab に SSD /
                                      │          nvidia-container-toolkit / docker-placenav.service
  deploy.sh       イメージ・src 配布 ─┘─ LAN ─▶ /mnt/ssd/PlaceNav (src, 重み, topomap)
-                                               run_xavier.sh → check / bench
+                                               run_xavier.sh → check / bench / navigate_xavier.sh
 ```
 
 | ファイル | 実行する場所 | 内容 |
@@ -23,6 +23,7 @@ parrot (x86, Internet)                       Xavier (JetPack 5.0.2 のまま, of
 | `setup_xavier.sh` | parrot | NVIDIA コンテナ runtime の deb を取得し、Xavier で `setup_xavier_host.sh` を sudo 実行する（初回のみ） |
 | `deploy.sh` | parrot | イメージ（未読込時のみ）と `src/`・`docker/`（重み・topomap を含む）を Xavier に送る |
 | `run_xavier.sh` | Xavier | 推論コンテナで任意のコマンドを実行（parrot の ROS master に接続） |
+| `navigate_xavier.sh` | Xavier | 走行時に `navigate.py` を起動（下記「実機での走行」） |
 | `check_xavier.py` | Xavier（コンテナ内） | CUDA・cuDNN・cv_bridge の確認（qemu では確認できない分） |
 | `common.sh` | ― | IP・ユーザ名・パスなどの設定。環境変数で上書き可 |
 
@@ -74,6 +75,33 @@ sudo jetson_clocks   # 計測・走行前に毎回（再起動で戻る）。電
 parrot–Xavier 間は 1 Gbps であること（Xavier で `cat /sys/class/net/eth0/speed` が 1000）。
 1280x720 の生画像は 1 Gbps なら約 30 ms で届くが、100 Mbps だと 1 枚 235 ms かかり欠落する
 （2026-11-14 にハブ–Xavier 間の不良ケーブルで 100 Mbps になっていた）。
+
+## 実機での走行（parrot で launch、Xavier で navigate.py）
+
+```bash
+# 1. parrot: いつもの launch に remote_navigation:=true を付ける（path_timeout > 0 でないと launch が拒否する）
+roslaunch rwrc26_bringup navigation.launch remote_navigation:=true path_timeout:=1.0 \
+    wp_model:=omnivla_edge pr_model:=cosplace topomap_dir:=<route> drive_robot:=false
+# 2. Xavier（別ターミナル）: parrot の /placenav_runner のパラメータで navigate.py を起動する
+sudo jetson_clocks
+/mnt/ssd/PlaceNav/docker/xavier/navigate_xavier.sh
+```
+
+- `remote_navigation:=false`（既定）なら従来どおり parrot で `navigate.py` を動かす。
+- route・モデル・各種インデックスは parrot の launch 引数だけで決まる。Xavier 側で指定するものはない。
+  `deploy.sh` で重みを送ってあれば NoMaD なども選べるが、CosPlace + NoMaD は 1 周期が 200 ms を超えるので約 4 Hz になる。
+- 起動順はどちらが先でもよい（Xavier 側は parrot の launch を最大 120 秒待つ）。
+- `navigate_xavier.sh` は最初に chrony を確認する。時刻源が parrot でない、またはずれが 5 ms を超える
+  （再起動直後に起きる）場合は起動しない。1 分ほど待って再実行する。
+- parrot の launch を止める（または再起動する）と、Xavier 側の navigate.py も止まる。
+- Xavier か LAN が止まると、parrot の TEB は `path_timeout` 秒で経路を失って停止する
+  （`Bridge stop: INPUT_TIMEOUT`）。parrot の launch はそのまま残るので、Xavier で
+  `navigate_xavier.sh` をもう一度実行すれば走行に戻る（位置は今の画像から地図全体で推定し直す）。
+- `remote_navigation:=true` では parrot 側の PlaceNav GUI は出ない（位置推定の DB が Xavier 側にあるため）。rviz は出る。
+- 初回は Xavier で `global-feats-<pr_model>.h5` を作るので起動に時間がかかる。
+- 最初は `drive_robot:=false` で、Xavier のログの `Runtime` と rviz の経路を確認してから `true` にする。
+  2026-11-15 の実機（CosPlace + OmniVLA-edge）: 1 周期 約 155 ms（前処理込み）、`/waypoint` 5.3 Hz。
+  `Average runtime` は起動直後の遅い周期を含む累積平均なので、しばらく高めに出る。
 
 ## 元に戻す（Xavier）
 

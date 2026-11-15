@@ -45,8 +45,9 @@ cd src && ./navigate_whill.sh --topomap-dir ROUTE --wp-model omnivla_edge --pr-m
 
 ## 未検証・残課題
 
-- **ROS上のnavigate.py全体（rosbag再生、経路アダプタ、TEB）は未実行**。`navigate.py`のモデル準備（スケール・文脈・8点出力）は
-  ROSをスタブにして実コードで確認済み。実機コンテナでは`python3 src/verify_waypoint_ros.py --wp-model omnivla_edge --images DIR`を先に実行すること。
+- 2026-11-15に実機（WHILL）で、Jetson AGX Xavier上のnavigate.py（CosPlace＋OmniVLA-edge、1周期 約155 ms）→
+  経路アダプタ→TEBの通しで走行できた（`docker/xavier/README.md`）。経路の質は未評価。
+  新しい環境では`python3 src/verify_waypoint_ros.py --wp-model omnivla_edge --images DIR`を先に実行すること。
 - 障害物回避・衝突は評価していない。TEB＋STVLは外さない。
 - 短い参照経路がTEBに与える影響。必要なら`metric_scale`の調整（現在は上流の0.1に固定）や`--target-waypoint-idx`（上流は4）を試す。
 - 学習データに車いす型の機体は含まれない（FrodoBots・車載映像など）。WHILLのカメラ高さ・画角との差は未評価。
