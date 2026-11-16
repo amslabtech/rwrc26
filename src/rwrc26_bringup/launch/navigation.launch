@@ -43,6 +43,9 @@
   <arg name="img_size" default="[]"/>
   <arg name="navigation_visualization" default="true"/>
   <arg name="navigation_required" default="true"/>
+  <!-- true: navigate.py runs on the Xavier (docker/xavier/navigate_xavier.sh); here only the
+       path adapter. Requires path_timeout > 0 so TEB stops when the Xavier or the LAN stops. -->
+  <arg name="remote_navigation" default="false"/>
   <!-- Match bridge.launch defaults; explicit args override bridge_config. -->
   <arg name="reference_mode" default="latest"/>
   <arg name="retain_safe_path" default="false"/>
@@ -51,7 +54,8 @@
   <arg name="global_frame" default="odom"/>
   <arg name="robot_base_frame" default="base_link"/>
   <arg name="odom_topic" default="/odom"/>
-  <arg name="valid_reference" value="$(eval {True: True}[arg('reference_mode') in ['state_machine', 'latest'] and 0 &lt;= float(arg('path_timeout')) &lt; float('inf')])"/>
+  <arg name="valid_remote" value="$(eval {True: True}[not arg('remote_navigation') or float(arg('path_timeout')) &gt; 0])"/>
+  <arg name="valid_reference" value="$(eval {True: True}[arg('reference_mode') in ['state_machine', 'latest', 'avoidance_commit'] and 0 &lt;= float(arg('path_timeout')) &lt; float('inf')])"/>
   <!-- Explicit opt-in switches the planner output to the live robot topic. -->
   <arg name="drive_robot" default="false"/>
   <arg name="robot_cmd_vel_topic" default="/local_path/cmd_vel"/>
@@ -125,6 +129,7 @@
         output="screen" required="$(arg navigation_required)" clear_params="true">
     <rosparam command="load" file="$(arg placenav_config)"/>
     <param name="placenav_config" value="$(arg placenav_config)"/>
+    <env name="OPENBLAS_NUM_THREADS" value="1"/>
     <param name="role" value="navigation"/>
     <param name="placenav_src" value="$(arg placenav_src)"/>
     <param name="topomap_dir" value="$(arg topomap_dir)"/>
@@ -166,6 +171,7 @@
     <param name="diagnostics" value="$(arg diagnostics)"/>
     <param name="drive_robot" value="$(arg drive_robot)"/>
     <param name="cmd_vel_topic" value="$(arg cmd_vel_topic)"/>
+    <param name="remote_navigation" value="$(arg remote_navigation)"/>
   </node>
 
   <node if="$(arg record)" pkg="rwrc26_bringup" type="session_runner.py" name="session_recorder"
@@ -177,10 +183,6 @@
     <param name="bag_prefix" type="str" value="$(arg bag_prefix)"/>
     <param name="buffer_mb" value="$(arg bag_buffer_mb)"/>
     <rosparam command="load" file="$(arg record_topics)" param="topics"/>
-    <rosparam if="$(eval arg('comparison_profile') == 'matched')" command="load"
-      file="$(find rwrc26_bringup)/config/comparison_topics.yaml" param="comparison_topics"/>
-    <rosparam if="$(arg diagnostics)" command="load"
-      file="$(find rwrc26_bringup)/config/diagnostic_topics.yaml" param="diagnostic_topics"/>
   </node>
 
   <!-- Optional visualization-only second costmap instance. Gates/TF are shared.

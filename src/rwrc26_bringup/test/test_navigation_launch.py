@@ -23,7 +23,7 @@ class NavigationLaunchTest(unittest.TestCase):
     def test_modes_and_reference_controls_reach_actual_teb(self):
         snapshots = {}
         for fusion, profile in (('layers', 'current'), ('layers', 'matched'), ('points', 'matched')):
-            for reference in ('state_machine', 'latest'):
+            for reference in ('state_machine', 'latest', 'avoidance_commit'):
                 with self.subTest(fusion=fusion, profile=profile, reference=reference):
                     config, params = self.load('fusion_mode:='+fusion, 'comparison_profile:='+profile,
                                                'reference_mode:='+reference, 'path_timeout:=1.25',
@@ -65,6 +65,7 @@ class NavigationLaunchTest(unittest.TestCase):
             self.assertIs(config.params['/placenav_runner/local_pose'].value, False)
             self.assertEqual(config.params['/placenav_runner/subgoal_update'].value, 'nearest')
             self.assertFalse(any(n.name == 'local_goal_visualizer' for n in config.nodes))
+        self.assertEqual(defaults['reference_mode'], 'state_machine')
         self.assertEqual(params['/placenav_teb_bridge/path_timeout'], float(defaults['path_timeout']))
         self.assertEqual(params['/placenav_teb_bridge/TebLocalPlannerROS/shrink_horizon_backup'],
                          defaults['shrink_horizon_backup'] == 'true')
@@ -141,16 +142,26 @@ class NavigationLaunchTest(unittest.TestCase):
         for key, value in dict(start_node_idx=5, goal_node_idx=31, lookahead=2, nomad_seed=7,
                                img_size=[96, 96], recompute_place_recognition_db=True).items():
             self.assertEqual(params['/placenav_runner/'+key], value)
-        topics = params['/session_recorder/diagnostic_topics']
-        self.assertIn('/placenav_teb_bridge/diagnostics', topics)
+        self.assertNotIn('/session_recorder/diagnostic_topics', params)
+        self.assertNotIn('/session_recorder/comparison_topics', params)
         self.assertIn('/toponav/goal_evaluation', params['/session_recorder/topics'])
-        self.assertNotIn('/rwrc26/navigation_trace', topics)
+        self.assertIn('/toponav/local_goal_pose', params['/session_recorder/topics'])
         self.assertTrue(params['/session_recorder/diagnostics'])
 
     def test_invalid_reference_controls_fail_before_nodes_start(self):
         for argument in ('reference_mode:=typo', 'path_timeout:=-1', 'path_timeout:=nan', 'path_timeout:=inf'):
             with self.subTest(argument=argument), self.assertRaises(Exception):
                 self.load(argument)
+
+    def test_remote_navigation_requires_path_timeout(self):
+        for argument in ('path_timeout:=0.0', 'path_timeout:=0'):
+            with self.subTest(argument=argument), self.assertRaises(Exception):
+                self.load('remote_navigation:=true', argument)
+        _, params = self.load('remote_navigation:=true', 'path_timeout:=1.0')
+        self.assertIs(params['/placenav_runner/remote_navigation'], True)
+        self.assertEqual(params['/placenav_teb_bridge/path_timeout'], 1.0)
+        _, params = self.load()
+        self.assertIs(params['/placenav_runner/remote_navigation'], False)
 
     def test_explicit_drive_switch(self):
         _, params = self.load('drive_robot:=true', 'robot_cmd_vel_topic:=/test/drive')

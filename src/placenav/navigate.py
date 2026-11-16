@@ -7,7 +7,7 @@ import time
 
 from pathlib import Path
 from typing import List, Tuple, Dict
-from threading import Lock
+from threading import Condition, Lock
 
 # ROS
 import rospy
@@ -29,6 +29,7 @@ from placenav.goal_evaluation import GoalEvaluationConfig, evaluate_goal
 import parser
 from utils import (to_numpy, load_model, read_image, get_image_transform,
                    waypoints_to_ros_msg, bridge, odometry_msg_to_numpy)
+from frame_gate import FrameGate
 
 # Visualization
 from placenav_viz_msgs.msg import Viz, LocalizationDiagnostics, GoalEvaluation
@@ -69,7 +70,7 @@ class PlaceNavNode:
             raise ValueError("--target-waypoint-idx is outside the model's predicted trajectory")
         self._nomad_seed = args.nomad_seed
         self._image_transform = get_image_transform(args.img_size)
-        if args.wp_model in ("vint", "nomad"):
+        if args.wp_model in ("vint", "nomad", "omnivla_edge"):
             from placenav.waypoint_backends import waypoint_transform
             self._image_transform = waypoint_transform(args.img_size)
         self._vpr_transform = self._image_transform
@@ -238,8 +239,13 @@ class PlaceNavNode:
         model_config = model_configs[model]
         model_config["img_size"] = img_size
         model_config["seed"] = self._nomad_seed
-        self.waypoint_scale = (self.robot_config["max_v"] / self.robot_config["frame_rate"]
-                               if model_config.get("metric_scale") == "robot_step" else 1.0)
+        metric_scale = model_config.get("metric_scale")
+        if metric_scale == "robot_step":
+            self.waypoint_scale = self.robot_config["max_v"] / self.robot_config["frame_rate"]
+        elif isinstance(metric_scale, (int, float)):
+            self.waypoint_scale = float(metric_scale)  # fixed metres per output unit
+        else:
+            self.waypoint_scale = 1.0
         rospy.loginfo("Waypoint backend=%s, image=%s, points=%d, XY scale=%g",
                       model, img_size, model_config["len_traj_pred"], self.waypoint_scale)
 
@@ -262,6 +268,7 @@ class PlaceNavNode:
     def _setup_ros(self):
         self.obs_lock = Lock()
         self.odom_lock = Lock()
+        self.odom_condition = Condition(self.odom_lock)
         self.goal_selector = None
         self.local_pose_tracker = None
         self._goal_reached = False
@@ -274,6 +281,8 @@ class PlaceNavNode:
         if self.motion_model == 'odometry':
             self.odom_sub = rospy.Subscriber(
                 self.odometry_topic, Odometry, self.odom_callback, queue_size=100)
+        # Inference starts when a frame arrives (no 0-200 ms wait for a free-running timer).
+        self.frame_gate = FrameGate(self.robot_config['frame_rate'], is_shutdown=rospy.is_shutdown)
 
         obs_sub = rospy.Subscriber(
             self.robot_config['camera_topic'],
@@ -343,6 +352,7 @@ class PlaceNavNode:
             else:            
                 self.context_queue.pop(0)
                 self.context_queue.append({'timestamp': msg.header.stamp, 'img': img, 'vpr_img': vpr_img})
+        self.frame_gate.notify()
 
     def odom_callback(self, msg: Odometry):
         if self._terminal_stop_sent:
@@ -358,17 +368,38 @@ class PlaceNavNode:
         sample = OdomSample(msg.header.stamp.to_nsec(), pose,
                             msg.header.frame_id, msg.child_frame_id)
         try:
-            with self.odom_lock:
+            with self.odom_condition:
                 reason = self.odom_history.add(sample)
+                self.odom_condition.notify_all()
             if reason:
                 rospy.logwarn('Odometry continuity reset: %s', reason)
         except ValueError as error:
             rospy.logwarn_throttle(5, str(error))
 
     def _image_odometry(self, stamp_ns):
-        with self.odom_lock:
-            sample = self.odom_history.at(stamp_ns)
+        with self.odom_condition:
             epoch = self.odom_history.epoch
+            # Keep this image/context while waiting for its future odometry sample.
+            while not (rospy.is_shutdown() or self._terminal_stop_sent):
+                if self.odom_history.epoch != epoch:
+                    return None
+                with self.obs_lock:
+                    if (self.context_queue and
+                            self.context_queue[-1]['timestamp'].to_nsec() < stamp_ns):
+                        return None
+                sample = self.odom_history.at(stamp_ns)
+                if sample is not None:
+                    break
+                # Once odometry has passed this stamp, a missing bracket/gap
+                # cannot be repaired by waiting for more future samples.
+                if (self.odom_history.samples and
+                        self.odom_history.samples[-1].stamp_ns >= stamp_ns):
+                    return None
+                rospy.logwarn_throttle(5, 'Waiting for image-time odometry on %s',
+                                       self.odometry_topic)
+                self.odom_condition.wait(timeout=.1)  # Wall time; check stop even without sensors.
+            else:
+                return None
         if sample is not None and epoch != self._last_odom_epoch:
             self.place_recognition_querier.reset_odometry()
             if self.local_pose_tracker is not None and self.local_pose_tracker.mean is not None:
@@ -423,7 +454,8 @@ class PlaceNavNode:
 
         first_pass = True
         reached_goal = False
-        rate = rospy.Rate(self.robot_config['frame_rate'])
+        rate = self.frame_gate  # rate.sleep() = wait for the next camera frame
+        last_attempted_image_stamp = None
         while not rospy.is_shutdown():
 
             start_time = time.time()
@@ -438,7 +470,7 @@ class PlaceNavNode:
                 odometry = None
                 if self.motion_model == 'odometry':
                     stamp_ns = current_obs_timestamp.to_nsec()
-                    if stamp_ns == self._last_localization_stamp:
+                    if stamp_ns in (self._last_localization_stamp, last_attempted_image_stamp):
                         rate.sleep()
                         continue
                     if (self._last_localization_stamp is not None and
@@ -447,10 +479,11 @@ class PlaceNavNode:
                         if self.local_pose_tracker is not None:
                             self.local_pose_tracker.invalidate('IMAGE_TIME_DISCONTINUITY')
                         self._last_odom_epoch = None
+                    last_attempted_image_stamp = stamp_ns
                     odometry = self._image_odometry(stamp_ns)
                     if odometry is None:
-                        rospy.logwarn_throttle(5, 'Waiting for image-time odometry on %s',
-                                               self.odometry_topic)
+                        if rospy.is_shutdown() or self._terminal_stop_sent:
+                            return
                         rate.sleep()
                         continue
                 # Cat the context images along the channel dimension
@@ -584,7 +617,7 @@ class PlaceNavNode:
                     rospy.logerr_throttle(2.0, "Non-finite waypoint prediction; not publishing path")
                     rate.sleep()
                     continue
-                # Official ViNT/NoMaD actions are normalized displacements, not
+                # Official ViNT/NoMaD/OmniVLA-edge actions are normalized displacements, not
                 # meters. Preserve legacy GNM behavior; scale only configured models.
                 waypoints[:, :2] *= self.waypoint_scale
 
@@ -643,6 +676,8 @@ class PlaceNavNode:
                 self.goal_pub.publish(False)
                 
                 rate.sleep()
+            else:
+                rate.sleep()  # context not filled yet: wait for frames instead of spinning
 
 if __name__ == '__main__':
     args = parser.parse_args()

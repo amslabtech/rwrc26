@@ -29,14 +29,16 @@ usage()
     printf '%s\n' \
       'Usage: ./navigate_whill.sh --topomap-dir ROUTE [PlaceNav options]' \
       '  --pr-model cosplace|megaloc|salad|anyloc (default: cosplace)' \
-      '  --wp-model gnm_large|vint|nomad (default: gnm_large)' \
+      '  --wp-model gnm_large|vint|nomad|omnivla_edge (default: gnm_large)' \
       '  --motion-model legacy|odometry (default: odometry; requires node_odometry.json)' \
-      '  --subgoal-update nearest|passage (default: nearest; passage includes current-node recovery)' \
+      '  --subgoal-update nearest|passage|arrival (default: nearest; passage includes current-node recovery)' \
       '  --goal-eval-position-tolerance METERS --goal-eval-yaw-tolerance RADIANS' \
       '  --goal-eval-neighborhood-radius METERS (diagnostics only; defaults: 0.5, 0.3491, 2.0)' \
       '' \
       'Starts inference and the GUI visualization. Use --no-visualization to suppress the GUI.' \
       'Starts the GNM Path adapter. Use --no-path-adapter to suppress it.' \
+      '  --remote-navigation: start only the path adapter; navigate.py runs on another' \
+      '    machine (docker/xavier/navigate_xavier.sh). No GUI: its database is over there.' \
       '  --path-adapter-source-frame FRAME (default: base_link)' \
       '  --path-adapter-target-frame FRAME (default: odom)' \
       'It never starts the PD controller or robot drivers.'
@@ -52,6 +54,7 @@ PR_MODEL="cosplace"
 WP_MODEL="gnm_large"
 SHOW_VISUALIZATION=1
 START_PATH_ADAPTER=1
+REMOTE_NAVIGATION=0
 PATH_SOURCE_FRAME=base_link
 PATH_TARGET_FRAME=odom
 NAV_ARGS=()
@@ -80,6 +83,10 @@ while [[ $# -gt 0 ]]; do
             START_PATH_ADAPTER=0
             shift
             ;;
+        --remote-navigation)
+            REMOTE_NAVIGATION=1
+            shift
+            ;;
         --path-adapter-source-frame)
             PATH_SOURCE_FRAME="$2"
             shift 2
@@ -100,24 +107,34 @@ if [[ -z "${TOPOMAP_DIR}" ]]; then
     exit 2
 fi
 
+if [[ "${REMOTE_NAVIGATION}" -eq 1 && "${START_PATH_ADAPTER}" -eq 0 ]]; then
+    echo "--remote-navigation runs only the path adapter; do not combine it with --no-path-adapter" >&2
+    exit 2
+fi
+
 DB_PATH="${TOPOMAP_BASE_DIR}/${TOPOMAP_DIR}/global-feats-${PR_MODEL}.h5"
 DB_READY_PATH="${DB_PATH}.ready"
-rm -f "${DB_READY_PATH}"
-
-python3 "${SCRIPT_DIR}/placenav/navigate.py" \
-    --robot whill \
-    --robot-config-path "${ROBOT_CONFIG}" \
-    --topomap-base-dir "${TOPOMAP_BASE_DIR}" \
-    --model-weight-dir "${MODEL_WEIGHT_DIR}" \
-    --model-config-path "${MODEL_CONFIG}" \
-    "${NAV_ARGS[@]}" &
-NAV_PID=$!
+NAV_PID=""
 VIZ_PID=""
+if [[ "${REMOTE_NAVIGATION}" -eq 1 ]]; then
+    SHOW_VISUALIZATION=0
+    echo "Remote navigation: navigate.py is expected on the Xavier (docker/xavier/navigate_xavier.sh)."
+else
+    rm -f "${DB_READY_PATH}"
+    python3 "${SCRIPT_DIR}/placenav/navigate.py" \
+        --robot whill \
+        --robot-config-path "${ROBOT_CONFIG}" \
+        --topomap-base-dir "${TOPOMAP_BASE_DIR}" \
+        --model-weight-dir "${MODEL_WEIGHT_DIR}" \
+        --model-config-path "${MODEL_CONFIG}" \
+        "${NAV_ARGS[@]}" &
+    NAV_PID=$!
+fi
 PATH_ADAPTER_PID=""
 
 if [[ "${START_PATH_ADAPTER}" -eq 1 ]]; then
     EXPECTED_WAYPOINTS=5
-    [[ "${WP_MODEL}" != "nomad" ]] || EXPECTED_WAYPOINTS=8
+    [[ "${WP_MODEL}" != "nomad" && "${WP_MODEL}" != "omnivla_edge" ]] || EXPECTED_WAYPOINTS=8
     "${SCRIPT_DIR}/run_gnm_path_adapter_whill.sh" --expected-waypoints "${EXPECTED_WAYPOINTS}" \
         --source-frame "${PATH_SOURCE_FRAME}" --target-frame "${PATH_TARGET_FRAME}" &
     PATH_ADAPTER_PID=$!
@@ -127,7 +144,7 @@ cleanup()
 {
     [[ -z "${VIZ_PID}" ]] || kill "${VIZ_PID}" 2>/dev/null || true
     [[ -z "${PATH_ADAPTER_PID}" ]] || kill "${PATH_ADAPTER_PID}" 2>/dev/null || true
-    kill "${NAV_PID}" 2>/dev/null || true
+    [[ -z "${NAV_PID}" ]] || kill "${NAV_PID}" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
@@ -157,7 +174,8 @@ if [[ "${SHOW_VISUALIZATION}" -eq 1 ]]; then
 fi
 
 set +e
-wait "${NAV_PID}"
+# Remote navigation: the adapter is the local process whose exit ends the session.
+wait "${NAV_PID:-${PATH_ADAPTER_PID}}"
 NAV_STATUS=$?
 set -e
 exit "${NAV_STATUS}"

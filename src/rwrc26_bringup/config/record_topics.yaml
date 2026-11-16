@@ -25,7 +25,7 @@
 - /realsense/color/image_raw/compressed
 - /realsense/color/camera_info
 - /placenav_teb_bridge/control_status
-- /realsense/depth/image_rect_raw
+# - /realsense/depth/image_rect_raw
 - /realsense/depth/camera_info
 - /realsense/depth/color/points
 - /realsense/depth_registered/points

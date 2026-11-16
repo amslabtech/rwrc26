@@ -107,7 +107,7 @@ bagからC2画像、D435点群、odom、TFを再生し、C2深度・点群、Pla
 
 | 引数 | 既定値 | 反映先・意味 |
 |---|---|---|
-| `reference_mode` | `state_machine` | TEBブリッジの参照方式。`latest`も選択可能 |
+| `reference_mode` | `latest` | TEBブリッジの参照方式。`state_machine`・`avoidance_commit`も選択可能。`bridge.launch`単体の既定値は`state_machine` |
 | `path_timeout` | `0.0` | 有効なPathの受信間隔上限、秒。0は無効 |
 | `shrink_horizon_backup` | `true` | `TebLocalPlannerROS/shrink_horizon_backup` |
 | `global_frame` | `odom` | 点群gate・観測区間・コストマップ・TEB・経路adapter・RVizの共通フレーム |
@@ -218,6 +218,7 @@ TEBの終端停止は全モード共通で、遅れた経路・False通知では
 | `fusion_mode` / `comparison_profile` | `layers` / `current`。`points`時のprofile既定は`matched` |
 | `batch_interval` / `common_voxel_size` / `common_decay` | `0.1 s` / `0.05 m` / `0.8 s`（matched時） |
 | `gates_config` / `costmap_config` | `source_costmaps/config/{gates,costmap}.yaml` |
+| `remote_navigation` | `false`。`true` で navigate.py を起動せず path adapter だけ（Xavier で `docker/xavier/navigate_xavier.sh`）。`path_timeout` > 0 が必須 |
 | `image_topic` / `server_host` / `server_port` | `/usb_cam/image_raw` / `127.0.0.1` / `5557` |
 | `max_input_width` / `cloud_stride` | `640` / `4` |
 | `record` / `diagnostics` | `true` / `false` |
@@ -229,9 +230,9 @@ TEBの終端停止は全モード共通で、遅れた経路・False通知では
 bagと`.session.json`の名前は日本時間の`YYYYMMDD_HHMMSS_ffffff`。
 JSONには有効な起動設定、TEB設定、統合パッケージとブリッジのソース・実行ファイルのSHA256を保存する。
 既存ファイルを上書きせず、`tsukuba`内とそこへのシンボリックリンクは保存先として拒否する。
-`matched`時は比較用点群・メタデータも記録する。Ctrl+C後はbagの確定を待つ。
+Ctrl+C後はbagの確定を待つ。
 
-`diagnostics:=true`ではTEBの`/placenav_teb_bridge/diagnostics`、状態、gate診断などを追加記録する。
+記録するトピックは`record_topics`（既定`config/record_topics.yaml`）だけで決まり、`diagnostics`や`comparison_profile`では増えない。
 現在のPlaceNavは`--trace-navigation`に未対応なので、その引数は渡さず警告を出す。
 対応する別版を`placenav_src`で指定した場合だけ、trace引数と`/rwrc26/*`の記録を追加する。
 診断の有無はモデル・参照方式を切り替えない。最新版TEBの診断配信自体は常時有効。

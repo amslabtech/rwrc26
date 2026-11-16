@@ -135,7 +135,8 @@ def main():
                     xy_goal_tolerance=.1, enable_homotopy_class_planning=False)))
         results = []
         cases = [('latest', False, 'goal'), ('state_machine', False, 'goal'),
-                 ('latest', True, 'goal'), ('latest', False, 'stop')]
+                 ('latest', True, 'goal'), ('latest', False, 'stop'),
+                 ('avoidance_commit', False, 'goal'), ('avoidance_commit', True, 'stop')]
         for index, (mode, retained, event) in enumerate(cases):
             clock_running.set();commands.clear();plans.clear();diagnostics.clear()
             goal, stop_topic = f'/test/{index}/goal', f'/test/{index}/stop'

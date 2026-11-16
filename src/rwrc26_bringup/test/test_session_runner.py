@@ -11,7 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 SCRIPT = Path(__file__).resolve().parents[1]/'scripts/session_runner.py'
 spec = importlib.util.spec_from_file_location('session_runner', SCRIPT)
@@ -52,20 +52,14 @@ PY
         with self.assertRaises(ValueError):
             runner.navigation_command({'placenav_src': str(self.root), 'topomap_dir': 'route'})
 
-    def test_diagnostics_are_opt_in_and_recorded_without_losing_original_topics(self):
+    def test_diagnostics_are_opt_in_and_add_no_recorded_topics(self):
         directory=self.root/'PlaceNav'; directory.mkdir(); (directory/'navigate_whill.sh').touch()
         (directory/'placenav').mkdir()
         (directory/'placenav/parser.py').write_text("parser.add_argument('--trace-navigation', action='store_true')")
         command,_=runner.navigation_command(dict(placenav_src=str(directory),topomap_dir='route',diagnostics=True))
         self.assertIn('--trace-navigation',command)
-        params=self.record_params(); params['diagnostic_topics']=['/rwrc26/navigation_trace','/tf']
-        command,_,_=runner.recording_command(params)
-        topics=command[command.index('-O')+2:]
-        self.assertEqual(topics,['/tf','/odom','/rwrc26/navigation_trace'])
-        params['comparison_topics']=['/obstacles/comparison/batch_trace','/tf']
-        command,_,_=runner.recording_command(params)
-        self.assertEqual(command[command.index('-O')+2:],
-                         ['/tf','/odom','/rwrc26/navigation_trace','/obstacles/comparison/batch_trace'])
+        command,_,_=runner.recording_command(self.record_params())
+        self.assertEqual(command[command.index('-O')+2:],['/tf','/odom'])  # duplicates removed, nothing added
 
     def test_latest_checkout_receives_navigation_options_and_no_unsupported_trace(self):
         directory = Path(os.environ.get('PLACENAV_TEST_SRC', Path(__file__).resolve().parents[2]))
@@ -226,6 +220,151 @@ Path('adapter.json').write_text(json.dumps(sys.argv[1:]))
                                 capture_output=True, text=True, timeout=6)
         self.assertEqual(Path(json.loads(result.stdout)).resolve(),
                          (built/'placenav_viz_msgs/msg/__init__.py').resolve())
+
+    def test_remote_navigation_splits_parrot_and_xavier_commands(self):
+        directory = self.root/'PlaceNav'; directory.mkdir(); (directory/'navigate_whill.sh').touch()
+        xavier = self.root/'xavier src'; xavier.mkdir(); (xavier/'navigate_whill.sh').touch()
+        params = dict(placenav_src=str(directory), topomap_dir='route', wp_model='omnivla_edge',
+                      pr_model='cosplace', start_node_idx=4, remote_navigation=True)
+        parrot, _ = runner.navigation_command(params)
+        self.assertIn('--remote-navigation', parrot)
+        command, cwd = runner.xavier_navigation_command(params, str(xavier))
+        self.assertEqual(cwd, xavier.resolve())
+        self.assertEqual(command[1], str(xavier.resolve()/'navigate_whill.sh'))
+        self.assertNotIn('--remote-navigation', command)
+        self.assertIn('--no-path-adapter', command)
+        self.assertIn('--no-visualization', command)
+        # Everything that selects the route and models is identical on both machines.
+        strip = {'--remote-navigation', '--no-path-adapter', '--no-visualization'}
+        self.assertEqual([a for a in parrot[2:] if a not in strip], [a for a in command[2:] if a not in strip])
+        with self.assertRaises(ValueError):  # parrot launch without remote_navigation:=true
+            runner.xavier_navigation_command(dict(params, remote_navigation=False), str(xavier))
+
+    def test_remote_odometry_options_reach_xavier_parser(self):
+        directory = Path(os.environ.get('PLACENAV_TEST_SRC', Path(__file__).resolve().parents[2]))
+        spec = importlib.util.spec_from_file_location('remote_placenav_parser', directory/'placenav/parser.py')
+        parser = importlib.util.module_from_spec(spec); spec.loader.exec_module(parser)
+        options = dict(
+            placenav_src=str(directory), topomap_dir='odom route', wp_model='omnivla_edge',
+            pr_model='cosplace', remote_navigation=True, motion_model='odometry',
+            odom_topic='/test/vo', odom_max_gap=.15, odom_noise=.2, local_pose=True,
+            pass_threshold=.6, pass_confirmations=3, pass_local_mass=.9,
+            goal_recovery_distance=5., goal_recovery_threshold=.85,
+            final_goal_tolerance=.4, goal_eval_position_tolerance=.3,
+            goal_eval_yaw_tolerance_deg=35., goal_eval_neighborhood_radius=3.)
+        required = ['--robot', 'whill', '--robot-config-path', '/unused/robots.yaml',
+                    '--model-config-path', '/unused/models.yaml',
+                    '--model-weight-dir', '/unused/weights', '--topomap-base-dir', '/unused/maps']
+        for mode in ('nearest', 'passage', 'arrival'):
+            with self.subTest(mode=mode):
+                params = dict(options, subgoal_update=mode)
+                parrot, _ = runner.navigation_command(params)
+                xavier, _ = runner.xavier_navigation_command(params, str(directory))
+                strip = {'--remote-navigation', '--no-path-adapter', '--no-visualization'}
+                self.assertEqual([a for a in parrot[2:] if a not in strip],
+                                 [a for a in xavier[2:] if a not in strip])
+                with patch.object(sys, 'argv', ['navigate.py']+required+xavier[2:]):
+                    args = parser.parse_args()
+                for name in ('topomap_dir', 'wp_model', 'pr_model', 'motion_model', 'odom_topic',
+                             'odom_max_gap', 'odom_noise', 'local_pose', 'pass_threshold',
+                             'pass_confirmations', 'pass_local_mass', 'goal_recovery_distance',
+                             'goal_recovery_threshold', 'final_goal_tolerance',
+                             'goal_eval_position_tolerance', 'goal_eval_neighborhood_radius'):
+                    self.assertEqual(getattr(args, name), options[name], name)
+                self.assertEqual(args.subgoal_update, mode)
+                self.assertAlmostEqual(args.goal_eval_yaw_tolerance, math.radians(35.))
+
+    def test_remote_whill_script_only_runs_adapter_and_preserves_local_db(self):
+        source = Path(os.environ.get('PLACENAV_TEST_SRC', Path(__file__).resolve().parents[2]))
+        directory = self.root/'remote'; directory.mkdir()
+        script = directory/'navigate_whill.sh'
+        script.write_text((source/'navigate_whill.sh').read_text())
+        ready = directory/'topomaps/images/route/global-feats-cosplace.h5.ready'
+        ready.parent.mkdir(parents=True); ready.write_text('local database untouched')
+        fake_bin = directory/'bin'; fake_bin.mkdir()
+        python = fake_bin/'python3'
+        python.write_text('#!'+sys.executable+'\nfrom pathlib import Path\n'
+                          'Path("unexpected_inference").touch()\nraise SystemExit(97)\n')
+        python.chmod(0o755)
+        adapter = directory/'run_gnm_path_adapter_whill.sh'
+        adapter.write_text('#!'+sys.executable+'\nimport json,sys\nfrom pathlib import Path\n'
+                           'Path("adapter.json").write_text(json.dumps(sys.argv[1:]))\n')
+        adapter.chmod(0o755)
+        command = ['bash', str(script), '--remote-navigation', '--topomap-dir', 'route',
+                   '--wp-model', 'omnivla_edge', '--pr-model', 'cosplace',
+                   '--path-adapter-source-frame', 'test_base', '--path-adapter-target-frame', 'test_odom']
+        env = dict(os.environ, PATH=str(fake_bin)+os.pathsep+os.environ['PATH'])
+        subprocess.run(command, cwd=directory, env=env, check=True, timeout=6, capture_output=True)
+        self.assertFalse((directory/'unexpected_inference').exists())
+        self.assertEqual(ready.read_text(), 'local database untouched')
+        args = json.loads((directory/'adapter.json').read_text())
+        for flag, value in (('--expected-waypoints', '8'), ('--source-frame', 'test_base'),
+                            ('--target-frame', 'test_odom')):
+            self.assertEqual(args[args.index(flag)+1], value)
+        rejected = subprocess.run(command+['--no-path-adapter'], cwd=directory, env=env,
+                                  capture_output=True, text=True, timeout=6)
+        self.assertEqual(rejected.returncode, 2)
+
+    def test_xavier_runner_stops_on_parrot_disappearance_or_restart(self):
+        directory = self.root/'xavier'; directory.mkdir(); (directory/'navigate_whill.sh').touch()
+        for replacement in (None, 'http://127.0.0.1:40202/'):
+            with self.subTest(replacement=replacement):
+                ros = Mock()
+                ros.is_shutdown.return_value = False
+                ros.has_param.return_value = True
+                ros.get_param.return_value = dict(
+                    placenav_src='/parrot/src', topomap_dir='route', remote_navigation=True,
+                    motion_model='odometry', subgoal_update='arrival', local_pose=True)
+                graph = Mock()
+                graph.Master.return_value.lookupNode.side_effect = [
+                    'http://127.0.0.1:40101/', 'http://127.0.0.1:40101/', replacement]
+                process = Mock(); process.poll.return_value = None
+                with patch.dict(sys.modules, rospy=ros, rosgraph=graph), \
+                        patch.object(runner.subprocess, 'Popen', return_value=process) as start, \
+                        patch.object(runner, 'stop_process') as stop:
+                    status = runner.xavier_main(['--xavier', '--placenav-src', str(directory)])
+                self.assertEqual(status, 0)
+                self.assertTrue(start.call_args.kwargs['start_new_session'])
+                command = start.call_args.args[0]
+                self.assertIn('--local-pose', command)
+                self.assertIn('--no-path-adapter', command)
+                self.assertNotIn('--remote-navigation', command)
+                stop.assert_called_once_with(process)
+
+    def test_xavier_runner_propagates_navigation_exit_and_cleans_children(self):
+        directory = self.root/'xavier'; directory.mkdir(); (directory/'navigate_whill.sh').touch()
+        for child_status, expected in ((0, 0), (7, 1)):
+            with self.subTest(child_status=child_status):
+                ros = Mock()
+                ros.is_shutdown.return_value = False
+                ros.has_param.return_value = True
+                ros.get_param.return_value = dict(topomap_dir='route', remote_navigation=True)
+                graph = Mock()
+                graph.Master.return_value.lookupNode.return_value = 'http://127.0.0.1:40101/'
+                process = Mock(); process.poll.return_value = child_status
+                with patch.dict(sys.modules, rospy=ros, rosgraph=graph), \
+                        patch.object(runner.subprocess, 'Popen', return_value=process), \
+                        patch.object(runner, 'stop_process') as stop:
+                    status = runner.xavier_main(['--xavier', '--placenav-src', str(directory)])
+                self.assertEqual(status, expected)
+                stop.assert_called_once_with(process)
+
+    def test_xavier_runner_rejects_nonremote_session_and_wait_timeout(self):
+        directory = self.root/'xavier'; directory.mkdir(); (directory/'navigate_whill.sh').touch()
+        ros = Mock()
+        ros.is_shutdown.return_value = False
+        ros.has_param.return_value = True
+        ros.get_param.return_value = dict(topomap_dir='route', remote_navigation=False)
+        graph = Mock()
+        graph.Master.return_value.lookupNode.return_value = 'http://127.0.0.1:40101/'
+        with patch.dict(sys.modules, rospy=ros, rosgraph=graph), \
+                patch.object(runner.subprocess, 'Popen') as start:
+            self.assertEqual(runner.xavier_main(['--xavier', '--placenav-src', str(directory)]), 1)
+            start.assert_not_called()
+            graph.Master.return_value.lookupNode.return_value = None
+            with patch.object(runner.time, 'monotonic', side_effect=[10., 11.]):
+                self.assertEqual(runner.xavier_main(['--xavier', '--wait', '0']), 1)
+            start.assert_not_called()
 
     def record_params(self, directory=None):
         return {'bag_dir': str(directory or self.root/'bags'), 'topics': ['/tf', '/tf', '/odom'],
