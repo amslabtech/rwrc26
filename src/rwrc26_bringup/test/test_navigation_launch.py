@@ -90,7 +90,7 @@ class NavigationLaunchTest(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('yaml_session_runner', ROOT/'scripts/session_runner.py')
         runner = importlib.util.module_from_spec(spec); spec.loader.exec_module(runner)
         values = yaml.safe_load((ROOT/'config/placenav.yaml').read_text())
-        values.update(odom_noise=.25, pass_threshold=.7, lookahead=2,
+        values.update(odom_noise=.25, pass_threshold=.7, lookahead=2, local_pose_reset=False,
                       goal_eval_yaw_tolerance_deg=35.)
         with tempfile.TemporaryDirectory(prefix='placenav-config-') as directory:
             path = Path(directory)/'custom config.yaml'
@@ -100,7 +100,7 @@ class NavigationLaunchTest(unittest.TestCase):
                     with self.subTest(launch=launch.name, override=override):
                         options = ['placenav_config:='+str(path), 'subgoal_update:=nearest']
                         if override:
-                            options += ['odom_noise:=0.15', 'pass_threshold:=0.6',
+                            options += ['odom_noise:=0.15', 'pass_threshold:=0.6', 'local_pose_reset:=true',
                                         'goal_eval_yaw_tolerance:=0.2']
                         config = load_config_default([(str(launch), options)], 11311, verbose=False)
                         prefix = '/placenav_runner/'
@@ -108,6 +108,8 @@ class NavigationLaunchTest(unittest.TestCase):
                                   if name.startswith(prefix)}
                         params['placenav_src'] = str(ROOT.parent)
                         command, _ = runner.navigation_command(params)
+                        self.assertIs(params['local_pose_reset'], override)
+                        self.assertIn('--local-pose-reset' if override else '--no-local-pose-reset', command)
                         import math
                         expected = {'--odom-noise': .15 if override else .25,
                                     '--pass-threshold': .6 if override else .7,
@@ -115,6 +117,36 @@ class NavigationLaunchTest(unittest.TestCase):
                                     '--goal-eval-yaw-tolerance': .2 if override else math.radians(35.)}
                         for flag, value in expected.items():
                             self.assertEqual(float(command[command.index(flag)+1]), value, flag)
+
+    def test_six_mode_reset_patterns_reach_the_actual_parser_in_both_launches(self):
+        import importlib.util
+        from unittest.mock import patch
+        import sys
+        def module(name, path):
+            spec = importlib.util.spec_from_file_location(name, path)
+            value = importlib.util.module_from_spec(spec); spec.loader.exec_module(value)
+            return value
+        runner = module('reset_runner', ROOT/'scripts/session_runner.py')
+        parser = module('reset_parser', ROOT.parent/'placenav/parser.py')
+        required = ['--robot', 'whill', '--robot-config-path', 'robots.yaml',
+                    '--model-config-path', 'models.yaml', '--topomap-base-dir', 'maps',
+                    '--model-weight-dir', 'weights']
+        for launch in [LAUNCH, ROOT/'launch/navigation_debug.launch']:
+            for mode in ['nearest', 'passage', 'arrival']:
+                for enabled in [False, True]:
+                    with self.subTest(launch=launch.name, mode=mode, enabled=enabled):
+                        options = ['subgoal_update:='+mode, 'local_pose_reset:='+str(enabled).lower()]
+                        config = load_config_default([(str(launch), options)], 11311, verbose=False)
+                        prefix = '/placenav_runner/'
+                        params = {k[len(prefix):]:p.value for k,p in config.params.items() if k.startswith(prefix)}
+                        params['placenav_src'] = str(ROOT.parent)
+                        command, _ = runner.navigation_command(params)
+                        with patch.object(sys, 'argv', ['navigate.py']+required+command[2:]):
+                            args = parser.parse_args()
+                        self.assertEqual(args.subgoal_update, mode)
+                        self.assertIs(args.local_pose, True)
+                        self.assertIs(args.local_pose_reset, enabled)
+                        self.assertEqual(sum(n.name == 'local_goal_visualizer' for n in config.nodes), 1)
 
     def test_frames_reach_gates_tf_batch_maps_teb_and_path_runner(self):
         config, params = self.load('global_frame:=test_odom', 'robot_base_frame:=test_base',

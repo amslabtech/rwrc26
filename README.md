@@ -99,7 +99,8 @@ odomモードでは、位置・向きの近似到達スコアを`/toponav/goal_e
 `passage`・`arrival`の切り替えと救済の理由も出力します。
 launchでは既定の`local_pose:=true`で局所2D推定と相対ゴール姿勢の診断も出力します。
 `local_pose:=false`で無効にできます。
-arrivalの通常到達時と、確定した救済でbeliefと局所位置が大きく矛盾する場合にXY基準を更新します。
+`local_pose_reset:=true`（既定）で、各モードの通常画像切り替え時と、条件を満たした救済時にXY基準を更新します。
+`local_pose_reset:=false`なら姿勢出力を維持したまま補正を止め、3モード×リセット有無の6パターンを比較できます。
 向きはodom追跡を継続し、制御への接続は未実装です。
 [局所姿勢の説明](doc/LOCAL_POSE.md)を参照してください。
 `/toponav/goal_evaluation`の見るべき項目、状態の意味、切り替え前後のID・スコアの読み方は

@@ -127,7 +127,7 @@ PY
                         {'subgoal_update': 'arrival', 'motion_model': 'legacy'},
                         {'subgoal_update': 'arrival', 'lookahead': 2},
                         {'goal_recovery_distance': 1}, {'goal_recovery_threshold': 0},
-                        {'local_pose': True, 'motion_model': 'legacy'}):
+                        {'local_pose': True, 'motion_model': 'legacy'}, {'local_pose_reset': 'false'}):
             with self.subTest(options=options), self.assertRaises(ValueError):
                 runner.navigation_command(dict(placenav_src=str(directory), topomap_dir='route', **options))
 

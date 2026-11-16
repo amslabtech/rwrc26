@@ -8,6 +8,10 @@ odom_max_gap: 0.2
 # 並進の予測ノイズ [m/sqrt(m)]。1m走行あたり分散0.01m²という暫定仮定。
 odom_noise: 0.1
 
+# 全モード共通の局所XY補正。falseでも初期基準・odom追跡・ゴールポーズ出力は維持する。
+# 通常の画像切り替えと救済の補正をまとめて切り替える。向き・1D beliefは補正しない。
+local_pose_reset: true
+
 # 到達・通過スコアのしきい値 [0,1]。過半数という設計値。
 pass_threshold: 0.5
 # passage・救済・最終到達の連続確認画像数。中間arrivalは1画像のまま。

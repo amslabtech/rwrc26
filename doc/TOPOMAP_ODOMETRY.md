@@ -215,6 +215,7 @@ arrivalの中間判定は新規画像1回で行う。観測更新のownerは中�
 | launch引数 | 既定値・意味 |
 |---|---|
 | `subgoal_update` | launchの既定は`arrival`。`nearest` / `passage`も選択可能 |
+| `local_pose_reset` | YAML初期値`true`。全モードの通常切り替え・救済時の局所XY補正。`false`でも`local_pose:=true`なら相対ゴール出力は継続 |
 | `pass_threshold` | `0.5`。全体の事後確率に対する通過・到達しきい値 |
 | `pass_confirmations` | `2`。passage・救済・最終到達で確認する連続新規画像数。arrivalの中間判定は1画像 |
 | `pass_local_mass` | `0.8`。通常切り替え・最終到達に必要な目標近傍の確率 |

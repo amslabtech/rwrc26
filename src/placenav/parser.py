@@ -158,6 +158,11 @@ def parse_args():
                         help='Along-route process std in meters per sqrt(meter travelled)')
     parser.add_argument('--local-pose', action='store_true',
                         help='Publish diagnostic-only local 2D pose and relative image goal')
+    resets = parser.add_mutually_exclusive_group()
+    resets.add_argument('--local-pose-reset', dest='local_pose_reset', action='store_true', default=True,
+                        help='Enable local XY anchors at goal switches and recovery (default)')
+    resets.add_argument('--no-local-pose-reset', dest='local_pose_reset', action='store_false',
+                        help='Keep local pose output but disable XY resets in every subgoal mode')
     parser.add_argument('--subgoal-update', choices=['nearest', 'passage', 'arrival'], default='nearest',
                         help='Nearest+lookahead, retained passage, or target-node position arrival')
     parser.add_argument('--pass-threshold', type=probability, default=0.5)

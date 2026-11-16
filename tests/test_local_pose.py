@@ -139,6 +139,82 @@ class LocalPoseTest(unittest.TestCase):
         self.assertGreaterEqual(np.linalg.eigvalsh(tracker.covariance).min(), 0)
         self.assertEqual(tracker.status, 'ARRIVAL_POSITION_RESET')
 
+    def test_three_modes_with_reset_on_or_off_preserve_pose_output_and_filter(self):
+        for mode in ['nearest', 'passage', 'arrival']:
+            for enabled in [False, True]:
+                with self.subTest(mode=mode, enabled=enabled):
+                    self.point(0)
+                    selector = ProgressSubgoalSelector(self.motion, 4, mode=mode)
+                    selector.update(0, 10_000_000_000)
+                    tracker = self.tracker(); tracker.update(0, sample(10), 0)
+                    self.assertFalse(tracker.correct_subgoal_switch(
+                        selector, None, 0, enabled=enabled))
+                    for t in ([11, 12] if mode == 'passage' else [11]):
+                        self.point(2.1)
+                        tracker.update(1, sample(t, 2.4, .2, .7), 0)
+                        previous_goal = selector.subgoal
+                        selector.update(1, t*1_000_000_000)
+                        before, covariance = tracker.mean.copy(), tracker.covariance.copy()
+                        arrays = [x.copy() for x in (self.motion.probability, self.motion.grid_s,
+                            self.motion.heading_offset, self.motion.position_variance)]
+                        changed = selector.subgoal != previous_goal
+                        self.assertEqual(tracker.correct_subgoal_switch(
+                            selector, previous_goal, 1, enabled=enabled), enabled and changed)
+                        if not enabled or not changed:
+                            np.testing.assert_array_equal(tracker.mean, before)
+                            np.testing.assert_array_equal(tracker.covariance, covariance)
+                        self.assertEqual(tracker.covariance[2, 2], covariance[2, 2])
+                        self.assertEqual(tracker.mean[2], before[2])
+                        for a, b in zip(arrays, (self.motion.probability, self.motion.grid_s,
+                                self.motion.heading_offset, self.motion.position_variance)):
+                            np.testing.assert_array_equal(a, b)
+                    self.assertEqual(selector.subgoal, 2)
+                    self.assertEqual(tracker.anchor_node, 1 if enabled else 0)
+                    self.assertEqual(tracker.switch_count, int(enabled))
+                    expected = np.array([2., 0.]) if enabled else np.array([2.4, .2])
+                    np.testing.assert_allclose(tracker.mean[:2], expected)
+                    goal, covariance = tracker.goal(2)
+                    self.assertTrue(np.isfinite(goal).all())
+                    self.assertGreaterEqual(np.linalg.eigvalsh(covariance).min(), -1e-10)
+                    if enabled:
+                        self.assertEqual(tracker.status, mode.upper()+'_POSITION_RESET')
+                        self.assertFalse(tracker.correct_subgoal_switch(
+                            selector, previous_goal, 1))  # The same event cannot reset twice.
+                    tracker.update(1, sample(13, 2.4+math.cos(.7), .2+math.sin(.7), .7), 0)
+                    np.testing.assert_allclose(tracker.mean[:2], expected+[math.cos(.7), math.sin(.7)])
+
+    def test_nearest_reset_uses_current_node_with_lookahead_backward_and_large_changes(self):
+        for before, after, lookahead in [(0, 1, 2), (3, 1, 1), (0, 3, 1)]:
+            with self.subTest(before=before, after=after, lookahead=lookahead):
+                self.point(2*before)
+                selector = ProgressSubgoalSelector(self.motion, 4, mode='nearest', lookahead=lookahead)
+                selector.update(before, 10_000_000_000)
+                tracker = self.tracker(); tracker.update(before, sample(10), 0)
+                previous_goal = selector.subgoal
+                self.point(2*after)
+                selector.update(after, 11_000_000_000)
+                tracker.update(after, sample(11, .4, .2, .3), 0)
+                self.assertTrue(tracker.correct_subgoal_switch(selector, previous_goal, after))
+                np.testing.assert_allclose(tracker.mean, [2*after, 0, .3])
+                self.assertEqual(tracker.anchor_node, after)
+
+    def test_nearest_reset_rejects_stale_discontinuous_and_terminal_events(self):
+        self.point(0)
+        selector = ProgressSubgoalSelector(self.motion, 4, mode='nearest')
+        selector.update(0, 10_000_000_000)
+        tracker = self.tracker(); tracker.update(0, sample(10), 0)
+        self.point(2)
+        selector.update(1, 11_000_000_000)
+        self.assertFalse(tracker.correct_subgoal_switch(selector, 1, 1))  # Stale local pose.
+        tracker.update(1, sample(11, .4), 0)
+        before = tracker.mean.copy()
+        selector.reached = True
+        self.assertFalse(tracker.correct_subgoal_switch(selector, 1, 1))
+        selector.reached = False
+        tracker.invalidate('ODOMETRY_DISCONTINUITY')
+        self.assertFalse(tracker.correct_subgoal_switch(selector, 1, 1))
+        np.testing.assert_array_equal(tracker.mean, before)
+
     def test_arrival_continues_from_current_live_odom_without_reusing_movement(self):
         tracker = self.tracker()
         selector = self.arrival(tracker)
@@ -249,6 +325,20 @@ class LocalPoseTest(unittest.TestCase):
             selector, node = self.recovery(tracker, forward=forward, mode=mode)
             self.assertTrue(tracker.correct_recovery(selector, node))
             np.testing.assert_allclose(tracker.mean, [2*node+.4, 0, .7])
+
+    def test_reset_off_also_disables_recovery_without_changing_its_goal(self):
+        for mode in ['arrival', 'passage']:
+            with self.subTest(mode=mode):
+                tracker = self.tracker()
+                selector, node = self.recovery(tracker, mode=mode)
+                before, covariance = tracker.mean.copy(), tracker.covariance.copy()
+                goal = selector.subgoal
+                self.assertFalse(tracker.correct_recovery(selector, node, enabled=False))
+                np.testing.assert_array_equal(tracker.mean, before)
+                np.testing.assert_array_equal(tracker.covariance, covariance)
+                self.assertEqual(tracker.recovery_count, 0)
+                self.assertEqual(selector.subgoal, goal)
+                self.assertTrue(tracker.correct_recovery(selector, node, enabled=True))
 
     def test_recovery_keeps_consistent_pose_and_small_avoidance_offsets(self):
         for forward in [False, True]:

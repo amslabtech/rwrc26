@@ -1,4 +1,4 @@
-# 局所2D推定と相対ゴール姿勢（到達時XY補正・診断用）
+# 局所2D推定と相対ゴール姿勢（共通XYリセット・診断用）
 
 `local_pose:=true`で、1個の平面姿勢 `(x, y, yaw)` と3×3共分散を保持し、
 選択した画像ノードへの相対姿勢を`/toponav/local_goal_pose`
@@ -7,9 +7,10 @@
 全ノードにガウス分布を持つ実装ではない。
 
 VPR・1D belief・サブゴール更新・速度指令へこの推定を戻す処理はない。
-`subgoal_update:=arrival`の通常到達時に、到達したノードの記録XYへ現在位置を合わせる。
-実機・debug launchでは、このXY補正を使う`arrival`も既定とする。
-向きはリセットせず、odomによる追跡を継続する。追加の起動引数はない。
+`local_pose_reset:=true`で、全選択モードの通常画像切り替え時に局所XY基準を補正する。
+`false`なら通常切り替え・リカバリーのXY補正をともに止め、初期基準からodom追跡を続ける。
+実機・debug launchでは`arrival`、局所姿勢出力、XYリセットが既定で有効。
+向きはリセットせず、odomによる追跡を継続する。
 `arrival` / `passage`のリカバリー確定時には、局所位置とbeliefが大きく矛盾する場合だけ
 XY基準を補正する。条件と制限は後述。
 OmniVLA向け制御接続、不連続後の自動再局在はまだ実装していない。
@@ -42,6 +43,35 @@ roslaunch rwrc26_bringup navigation_debug.launch \
 source /home/user/ws/install/setup.bash
 rostopic echo /toponav/local_goal_pose
 ```
+
+### 3モード×リセット有無の6パターン
+
+全パターンで`motion_model:=odometry local_pose:=true`を使用する。
+`local_pose:=false`は姿勢推定・出力そのものを止めるため、リセットなしの比較には使わない。
+
+| 画像選択モード | XYリセットあり | XYリセットなし |
+|---|---|---|
+| nearest | `subgoal_update:=nearest local_pose_reset:=true` | `subgoal_update:=nearest local_pose_reset:=false` |
+| passage | `subgoal_update:=passage local_pose_reset:=true` | `subgoal_update:=passage local_pose_reset:=false` |
+| arrival | `subgoal_update:=arrival local_pose_reset:=true` | `subgoal_update:=arrival local_pose_reset:=false` |
+
+例：passageをリセットなしで確認する。
+
+```bash
+roslaunch rwrc26_bringup navigation_debug.launch \
+  topomap_dir:=whill_odometry_tsukuba_3.5 \
+  subgoal_update:=passage local_pose:=true local_pose_reset:=false \
+  bag:=/home/user/bagfiles/tsukuba/20261107_111825_777874.bag \
+  bag_pause:=true
+```
+
+`local_pose_reset`は実機用`config/placenav.yaml`・開発用`config/placenav_dev.yaml`で設定でき、
+明示したlaunch引数が優先する。初期値は両方`true`。
+単独CLIは`--local-pose --local-pose-reset`、無効化は`--local-pose --no-local-pose-reset`。
+Xavierのsplit inferenceも、同じ`/placenav_runner/local_pose_reset`をrunnerから引き継ぐ。
+
+リセットなしでも初回の地図とodomの対応付けは行う。以後のゴール画像変更・救済ではXYを置き直さない。
+画像選択や1D beliefの更新は、このフラグで変わらない。
 
 ### Cannot load message classと表示される場合
 
@@ -97,22 +127,36 @@ VPRの全体beliefは独立に維持され、局所Gaussianへ置き換えない
 
 以後は画像時刻に補間したodomの相対変化をSE(2)で合成する。
 横へ避けた変位もXYとして残すため、迂回距離をすべて前進と扱わない。
-通常の中間arrivalで画像11→12へ進むとき、到達した11を新しいXY基準とする。
+`local_pose_reset:=true`の通常切り替えは、全モードで同じXY補正処理を使う。
+
+| モード | リセット先の記録ノード |
+|---|---|
+| `arrival` | 到達判定した旧ゴール（`decision_goal_idx`） |
+| `passage` | 通過判定した旧ゴール（`decision_goal_idx`） |
+| `nearest` | ゴール画像が変わった時点の推定現在ノード（`current_node_idx`） |
+
+lookahead=1で通常arrival/passageの画像11→12へ進むとき、11を新しいXY基準とする。
+nearestの通常の前進でも同様だが、戻り・複数IDの変更・lookahead>1では
+旧ゴールが現在位置を表すとは限らないため、推定現在ノードを使用する。
 その画像時刻のodomまで移動を反映してからXYを合わせ、以後はそのodomからの差分で追跡する。
 新しい目標12の位置に現在位置を合わせる処理ではない。
-`ADVANCED_ARRIVAL`と更新した局所姿勢の時刻が一致する場合に一度だけ適用する。
-初期画像選択、`nearest`、通常の`passage`切り替え、最終停止では補正しない。
+判定と局所姿勢の時刻が一致する場合に一度だけ適用する。
+初期画像選択、画像ゴールを保持している間、最終停止の成立時には通常リセットしない。
+最終画像へ切り替わっただけで停止未成立の場合は、通常の画像変更として扱う。
 無効化された追跡を到達判定で復活させることもない。
 
-これは「到達した時点で、そのノードの撮影位置付近にいる」と仮定し直す実験的な補正。
+これは「その時点で、基準ノードの撮影位置付近にいる」と仮定し直す実験的な補正。
 到達判定は独立した精密な位置観測ではなく、VPRとodomから作った1D beliefに基づく。
-画像切り替えのずれや、回避中の横ずれも補正に取り込まれ、到達時には横ずれを消す。
+nearestは中点付近、passageは通過後、arrivalも許容エリア内で切り替わり得る。
+同じリセット処理でも、タイミングの違いによる誤差は残る。
+画像切り替えのずれや、回避中の横ずれも補正に取り込まれ、補正時には横ずれを消す。
 誤差がゼロになる保証はない。向きの初期誤差・ドリフトも、このXY補正では解消しない。
 
 ### リカバリー時の位置基準
 
 画像ゴールが置き去りになった場合と、初期のノード誤認識が訂正された場合を扱う。
-`RECOVERED_FORWARD` / `RECOVERED_BACKWARD`確定時にだけ、次を確認する。
+`local_pose_reset:=true`かつ`RECOVERED_FORWARD` / `RECOVERED_BACKWARD`確定時にだけ、次を確認する。
+`false`の場合、画像ゴールの救済は行うが、局所XYは補正しない。
 
 - 訂正後の現在ノードの経路進捗±`goal_eval_neighborhood_radius`に、
   `goal_recovery_threshold`以上の全体確率がある（既定±2m、80%）。
@@ -181,9 +225,9 @@ Gaussianの一次近似も不十分になる。
 | フィールド | 意味 |
 |---|---|
 | `header.stamp`, `subgoal_idx` | 入力画像時刻と実際に選択したゴール画像ID |
-| `anchor_node_idx`, `anchor_timestamp` | 初回または最後に通常arrivalでXY基準を合わせたノード・画像時刻。向きの基準更新を意味しない |
+| `anchor_node_idx`, `anchor_timestamp` | 初回または最後に通常切り替え／救済でXY基準を合わせたノード・画像時刻。リセットなしなら初回値のまま。向きの基準更新を意味しない |
 | `anchor_node_probability` | その基準更新時のノードの全体beliefに対する確率。共分散とは別の曖昧さ |
-| `status` | 補正した画像では`ARRIVAL_POSITION_RESET`、以後は`TRACKING_POSITION_ANCHOR`。初期基準のみでは`TRACKING_ASSUMED_ANCHOR` |
+| `status` | 通常補正した画像では`NEAREST_POSITION_RESET` / `PASSAGE_POSITION_RESET` / `ARRIVAL_POSITION_RESET`、救済補正は`RECOVERY_POSITION_RESET`。以後は`TRACKING_POSITION_ANCHOR`。初期基準のみでは`TRACKING_ASSUMED_ANCHOR` |
 | `diagnostic_only`, `heading_reference_assumed` | 常にtrue。制御用の確定姿勢ではない |
 | `odometry_continuous` | アンカーからのodom連続性が保たれているか。自己位置の正しさを保証する値ではない |
 | `pose_timestamp` | 最後に局所姿勢を更新できた時刻 |

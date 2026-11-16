@@ -31,8 +31,8 @@ class LocalPoseConfig:
 class LocalPoseTracker:
     """Propagate a single assumed map-to-live alignment, at image timestamps.
 
-    Ordinary arrival and inconsistent confirmed recovery can reanchor XY.
-    Heading continues to follow odometry. Other goal changes do not reanchor.
+    Ordinary goal switches and inconsistent confirmed recovery can reanchor XY.
+    Heading continues to follow odometry. Resets can be disabled independently.
     A discontinuity invalidates it until restart; corrections cannot revive it.
     """
     def __init__(self, motion, config=None):
@@ -45,6 +45,7 @@ class LocalPoseTracker:
         self.anchor_node = None
         self.anchor_stamp_ns = None
         self.anchor_probability = None
+        self.switch_count = 0
         self.arrival_count = 0
         self.recovery_count = 0
         self.continuous = True
@@ -132,7 +133,7 @@ class LocalPoseTracker:
         self.mean += delta
         self.mean[2] = wrap(self.mean[2])
         self.last_odometry = odometry
-        self.status = ('TRACKING_POSITION_ANCHOR' if self.arrival_count or self.recovery_count else
+        self.status = ('TRACKING_POSITION_ANCHOR' if self.switch_count or self.recovery_count else
                        'TRACKING_ASSUMED_ANCHOR')
 
     def _set_position_anchor(self, node, stamp, position, covariance, status):
@@ -145,37 +146,55 @@ class LocalPoseTracker:
         self.anchor_probability = float(self.motion.node_belief()[node])
         self.status = status
 
-    def correct_arrival(self, selector):
-        """Use an ordinary arrival as an assumed XY anchor, not a visual pose.
+    def correct_subgoal_switch(self, selector, previous_goal=None, closest_node=None, enabled=True):
+        """Apply the same position-only anchor at a mode's ordinary goal switch.
 
-        The selector's decision goal is the node just reached, not the next
-        image. It must have been evaluated at this track's current odom time.
-        No correction is fed back into the global belief or heading estimate.
+        Passage/arrival anchor the evaluated old goal. Nearest anchors its
+        current-node estimate, including backward changes and lookahead > 1.
+        None of these events independently measures geometric arrival.
         """
-        if (self.mean is None or not self.continuous or
-                selector.motion is not self.motion or selector.mode != 'arrival' or
-                selector.status != 'ADVANCED_ARRIVAL'):
+        if (not enabled or self.mean is None or not self.continuous or
+                selector.motion is not self.motion or selector.reached):
             return False
-        node = selector.decision_goal_idx
+        if selector.mode == 'nearest':
+            if previous_goal is None or previous_goal == selector.subgoal or selector.status == 'INITIAL':
+                return False
+            node = closest_node
+        elif selector.mode in ('arrival', 'passage'):
+            if selector.status != 'ADVANCED_' + selector.mode.upper():
+                return False
+            node = selector.decision_goal_idx
+            if selector.subgoal != node + 1 or (previous_goal is not None and previous_goal != node):
+                return False
+        else:
+            return False
         stamp = selector.last_stamp
-        if (not 0 <= node < len(self.motion.node_s) or selector.subgoal != node + 1 or
+        if (node is None or not 0 <= node < len(self.motion.node_s) or
                 stamp != self.last_odometry.stamp_ns or stamp <= self.anchor_stamp_ns):
             return False
-        # Arrival is an approximate area, not an exact position measurement.
+        # An anchor is assumed, with the same uncertainty floor in every mode.
         std = max(self.config.lateral_std, selector.evaluation_config.position_tolerance)
         self._set_position_anchor(node, stamp, self.motion.node_xy[node],
-                                  np.eye(2) * std**2, 'ARRIVAL_POSITION_RESET')
-        self.arrival_count += 1
+                                  np.eye(2) * std**2, selector.mode.upper() + '_POSITION_RESET')
+        self.switch_count += 1
+        if selector.mode == 'arrival':
+            self.arrival_count += 1
         return True
 
-    def correct_recovery(self, selector, closest_node):
+    def correct_arrival(self, selector):
+        """Arrival-only entry point retained for existing bag audit scripts."""
+        if selector.mode != 'arrival' or selector.status != 'ADVANCED_ARRIVAL':
+            return False
+        return self.correct_subgoal_switch(selector)
+
+    def correct_recovery(self, selector, closest_node, enabled=True):
         """Repair a stale XY reference only after coherent goal recovery.
 
         Use the selected metric neighborhood, not a mean over remote modes.
         This is an assumed route position, not an independent visual pose.
         Small disagreements retain lateral avoidance offsets and the anchor.
         """
-        if (self.mean is None or not self.continuous or selector.motion is not self.motion or
+        if (not enabled or self.mean is None or not self.continuous or selector.motion is not self.motion or
                 selector.mode not in ('arrival', 'passage') or
                 selector.status not in ('RECOVERED_FORWARD', 'RECOVERED_BACKWARD')):
             return False

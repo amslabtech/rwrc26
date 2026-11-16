@@ -17,6 +17,7 @@
   <arg name="odom_max_gap" default=""/>
   <arg name="odom_noise" default=""/>
   <arg name="local_pose" default="true"/>
+  <arg name="local_pose_reset" default=""/>
   <arg name="subgoal_update" default="arrival"/>
   <arg name="pass_threshold" default=""/>
   <arg name="pass_confirmations" default=""/>
@@ -142,6 +143,7 @@
     <param if="$(eval arg('odom_max_gap') != '')" name="odom_max_gap" value="$(arg odom_max_gap)" type="double"/>
     <param if="$(eval arg('odom_noise') != '')" name="odom_noise" value="$(arg odom_noise)" type="double"/>
     <param name="local_pose" value="$(arg local_pose)" type="bool"/>
+    <param if="$(eval arg('local_pose_reset') != '')" name="local_pose_reset" value="$(arg local_pose_reset)" type="bool"/>
     <param name="subgoal_update" value="$(arg subgoal_update)"/>
     <param if="$(eval arg('pass_threshold') != '')" name="pass_threshold" value="$(arg pass_threshold)" type="double"/>
     <param if="$(eval arg('pass_confirmations') != '')" name="pass_confirmations" value="$(arg pass_confirmations)" type="int"/>

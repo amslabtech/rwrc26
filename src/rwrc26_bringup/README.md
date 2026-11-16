@@ -171,7 +171,8 @@ roslaunch rwrc26_bringup navigation_debug.launch \
 | `wp_model` / `pr_model` | `nomad` / `salad` |
 | `subgoal_mode` / `filter_mode` | `place_recognition` / `bayesian` |
 | `motion_model` | `odometry`。`legacy` で従来の移動更新 |
-| `local_pose` | `true`。局所2D姿勢と相対画像ゴールを診断出力し、RVizのImage Goalに方向・撮影方向・IDを表示。`false`で無効。通常arrivalと、確定した救済でbeliefと大きく矛盾した場合にXY基準を更新。向きは維持。制御・画像選択には使わない |
+| `local_pose` | `true`。局所2D姿勢と相対画像ゴールを診断出力し、RVizのImage Goalに方向・撮影方向・IDを表示。`false`で推定・出力を無効。制御・画像選択には使わない |
+| `local_pose_reset` | YAML初期値`true`。全モードの通常画像切り替え時と、条件を満たした救済時のXY補正。`false`でも初期基準・odom追跡・相対ゴール出力を維持し、以後のXY補正を止める。向き・1D beliefは補正しない |
 | `odom_max_gap` / `odom_noise` | `0.2 s` / `0.1`。補間の最大間隔 / 走行1mあたりの分散が`odom_noise²` m²となるノイズ係数 |
 | `subgoal_update` | `arrival`。目標ノード所属と記録位置への接近で中間画像を更新（odom、lookahead=1）。`passage`は通過、`nearest`は現在ノード＋先読みで選択 |
 | `pass_threshold` / `pass_confirmations` | `0.5` / `2`。判定スコアのしきい値 / passage・救済・最終到達の連続新規画像数。arrivalの中間判定は1画像 |
@@ -199,7 +200,11 @@ roslaunch rwrc26_bringup navigation_debug.launch \
 別の配置では`placenav_src`を実際の`navigate_whill.sh`があるディレクトリに変更する。
 実機・debugとも既定は`subgoal_update:=arrival local_pose:=true`。
 相対ゴールポーズのための通常到達時XY補正を使う構成としている。
-`passage`は画像IDの順序が安定したbag検証結果があるが、通常通過時のXY補正は行わない。
+通常のXYリセットは`nearest`・`passage`・`arrival`共通で`local_pose_reset`を切り替えられる。
+各モードで`local_pose:=true`のままリセットをtrue/falseにして6パターンを比較できる。
+補正内容は記録ノードのXYへの位置合わせで、nearestは画像変更時の推定現在ノード、
+passage/arrivalは通過・到達判定した旧ゴールを基準にする。詳細と6パターンの例は
+[局所姿勢の説明](../../doc/LOCAL_POSE.md#3モードリセット有無の6パターン)を参照。
 `arrival`には密集ノードで単独ノードへの支持が不足し、救済で画像を飛び越す場合が残る。
 `subgoal_update:=passage` / `nearest`も明示して比較できる。
 初回画像は即座に出し、
