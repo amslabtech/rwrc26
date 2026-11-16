@@ -31,7 +31,9 @@ usage()
       '  --pr-model cosplace|megaloc|salad|anyloc (default: cosplace)' \
       '  --wp-model gnm_large|vint|nomad (default: gnm_large)' \
       '  --motion-model legacy|odometry (default: odometry; requires node_odometry.json)' \
-      '  --subgoal-update nearest|passage (default: nearest; passage includes current-node recovery)' \
+      '  --subgoal-update nearest|passage|arrival (default: nearest)' \
+      '  --local-pose (publish relative goal pose; off by default in standalone CLI)' \
+      '  --local-pose-reset | --no-local-pose-reset (XY resets; default: enabled)' \
       '  --goal-eval-position-tolerance METERS --goal-eval-yaw-tolerance RADIANS' \
       '  --goal-eval-neighborhood-radius METERS (diagnostics only; defaults: 0.5, 0.3491, 2.0)' \
       '' \

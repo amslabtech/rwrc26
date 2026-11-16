@@ -499,10 +499,14 @@ class PlaceNavNode:
                         if self.local_pose_tracker is not None:
                             from placenav.local_pose_ros import goal_pose_message
                             self.local_pose_tracker.update(closest_node_idx, odometry, self._last_odom_epoch)
-                            if self.local_pose_tracker.correct_arrival(self.goal_selector):
-                                rospy.loginfo('Local pose XY anchor -> node %s; heading retained',
-                                              self.local_pose_tracker.anchor_node)
-                            elif self.local_pose_tracker.correct_recovery(self.goal_selector, closest_node_idx):
+                            if self.local_pose_tracker.correct_subgoal_switch(
+                                    self.goal_selector, previous_goal, closest_node_idx,
+                                    enabled=args.local_pose_reset):
+                                rospy.loginfo('Local pose XY anchor -> node %s (%s); heading retained',
+                                              self.local_pose_tracker.anchor_node,
+                                              self.local_pose_tracker.status)
+                            elif self.local_pose_tracker.correct_recovery(
+                                    self.goal_selector, closest_node_idx, enabled=args.local_pose_reset):
                                 rospy.logwarn('Local pose XY reference corrected near node %s after recovery; heading retained',
                                               self.local_pose_tracker.anchor_node)
                             self.local_pose_pub.publish(goal_pose_message(
