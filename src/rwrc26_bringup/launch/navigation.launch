@@ -104,8 +104,7 @@
     /realsense/color/camera_info
     /placenav_teb_bridge/control_status
     /realsense/depth/camera_info
-    /realsense/depth/color/points
-    /realsense/depth_registered/points
+    /realsense/depth/image_rect_raw/compressedDepth
     /placenav_teb_bridge/retained_safe_path
     /placenav_teb_bridge/diagnostics"/>
   <arg name="debug_costmaps" default="false"/>
