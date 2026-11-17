@@ -245,6 +245,7 @@ TEBの終端停止は全モード共通で、遅れた経路・False通知では
 
 `debug_costmaps:=true`は表示用の別コストマップを追加する。
 通常のRViz表示は実際のTEB内部の`/placenav_teb_bridge/local_costmap/costmap`。
+RVizの固定フレームは`navigation.rviz`の`base_link`（ロボット中心の表示）で、`global_frame`には追従しない。
 
 ## 検証
 

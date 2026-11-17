@@ -232,5 +232,5 @@
     <param name="target_frame" value="$(arg global_frame)"/>
   </node>
   <node if="$(arg rviz)" pkg="rviz" type="rviz" name="navigation_rviz"
-        args="-d $(find rwrc26_bringup)/rviz/navigation.rviz -f $(arg global_frame)"/>
+        args="-d $(find rwrc26_bringup)/rviz/navigation.rviz"/>
 </launch>
