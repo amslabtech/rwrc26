@@ -73,9 +73,11 @@ class TopoNavVisualizationNode:
             place_recognition_db_path,
             topomap_img_dir,
         )
-        # Load the gallery db images into memory
-        topomap_image_filepaths = self.db_handler.get_filepaths()
-        self._topomap_images = [cv2.imread(str(img_path)) for img_path in topomap_image_filepaths]
+        # Load topomap images on demand, already resized to the panel size.
+        # Loading every full-resolution image up front took ~16 MB per node
+        # (about 15 GB for a 962-node 2880x1860 map) and a long startup.
+        self._topomap_image_paths = list(self.db_handler.get_filepaths())
+        self._topomap_image_cache = {}
 
         if self._display_waypoints:
             with args.cam_cal_path.open(mode="r", encoding="utf-8") as f:
@@ -145,6 +147,12 @@ class TopoNavVisualizationNode:
             Bool,
             queue_size=1)
         rospy.init_node('toponav_visualization_node', anonymous=False)
+
+    def _load_topomap_image(self, idx):
+        if idx not in self._topomap_image_cache:
+            img = cv2.imread(str(self._topomap_image_paths[idx]))
+            self._topomap_image_cache[idx] = cv2.resize(img, self._viz_image_size)
+        return self._topomap_image_cache[idx]
 
     def _obs_callback(self, msg: Image):
         with self._obs_lock:
@@ -243,7 +251,19 @@ class TopoNavVisualizationNode:
 
         start_time = time.time()
         started_writing = False
+        # With simulated time (bag replay), playback can be paused or seeked, so a gap
+        # in camera frames does not mean navigation has ended. Only auto-shutdown live.
+        auto_shutdown = not rospy.get_param("/use_sim_time", False)
+        if not auto_shutdown:
+            rospy.loginfo("/use_sim_time is true: keeping the window open when frames stop")
         while not rospy.is_shutdown():
+            if self._subgoal_idx is None:
+                # Nothing new to draw (between frames, or replay paused): wait briefly
+                # instead of spinning, and keep the window responsive.
+                if self._show:
+                    cv2.waitKey(30)
+                else:
+                    time.sleep(0.03)
             # Wait for 1sec to fill the buffer
             if time.time() - self._init_time > 1:
 
@@ -274,17 +294,17 @@ class TopoNavVisualizationNode:
                             query_obs_msg = self._obs_buffer[query_key]
 
                         # Get the topomap image corresponding to the query image
-                        if not 0 <= self._subgoal_idx < len(self._topomap_images):
+                        if not 0 <= self._subgoal_idx < len(self._topomap_image_paths):
                             rospy.logwarn(
                                 "Invalid subgoal index: %d, visualization map size: %d; skipping frame",
                                 self._subgoal_idx,
-                                len(self._topomap_images),
+                                len(self._topomap_image_paths),
                             )
                             self._subgoal_idx = None
                             self._query_timestamp = None
                             self._waypoints = None
                             continue
-                        subgoal_img = self._topomap_images[self._subgoal_idx]
+                        subgoal_img = self._load_topomap_image(self._subgoal_idx)
                         waypoints = deepcopy(self._waypoints)
                         diagnostics = deepcopy(
                             self._diagnostics_buffer.get(self._query_timestamp)
@@ -300,7 +320,8 @@ class TopoNavVisualizationNode:
                     if self._display_waypoints:
                         query_obs_img = self._overlay_waypoints(query_obs_img, waypoints)
 
-                    subgoal_img = cv2.resize(subgoal_img, self._viz_image_size)
+                    # Already panel-sized; copy so the text drawn below never reaches the cache.
+                    subgoal_img = subgoal_img.copy()
                     query_obs_img = cv2.resize(query_obs_img, self._viz_image_size)
 
                     # Add text to the images
@@ -342,7 +363,7 @@ class TopoNavVisualizationNode:
                             break
 
                 # Check if the navigation node is still publishing
-                if started_writing:
+                if started_writing and auto_shutdown:
                     if time.time() - start_time > 1/self.robot_config['frame_rate'] * 3:
                         rospy.loginfo(f"Topic {self.robot_config['camera_topic']} not publishing anymore. Shutting down...")
                         rospy.signal_shutdown("shutdown")
@@ -435,8 +456,3 @@ if __name__ == "__main__":
     cv2.destroyAllWindows()
     rospy.signal_shutdown("shutdown")
     exit(0)
-
-
-
-                
-
