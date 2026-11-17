@@ -243,6 +243,21 @@ TEBの終端停止は全モード共通で、遅れた経路・False通知では
 対応する別版を`placenav_src`で指定した場合だけtrace引数を渡す。`/rwrc26/*`を記録するには`record_topics`に追加する。
 診断の有無はモデル・参照方式を切り替えない。最新版TEBの診断配信自体は常時有効。
 
+深度画像は`<画像トピック>/compressedDepth`（`compressed_depth_image_transport`、既定のPNG）で記録すれば可逆に圧縮できる。
+`/compressed`はカラー用で、既定のJPEGでは16bit深度が8bitに潰れるため使わない。
+記録後は次のスクリプトで通常の深度画像に戻す。`compressedDepth`の各トピックを末尾を除いた名前の
+`sensor_msgs/Image`に置き換え、他のトピックは`/tf_static`のラッチも含めてそのままコピーするので、出力をそのまま再生できる。
+
+```bash
+rosrun rwrc26_bringup decompress_depth_bag.py input.bag output.bag
+# 特定のトピックだけ戻す場合（複数指定可）
+rosrun rwrc26_bringup decompress_depth_bag.py input.bag output.bag \
+  --topic /realsense/depth/image_rect_raw/compressedDepth
+```
+
+入力bagは読むだけで、既存の出力ファイルは上書きしない。RVL形式は未対応。
+16UC1（RealSenseの深度）は完全に元に戻る。32FC1はプラグイン側の量子化で相対誤差0.1%程度が残る。
+
 `debug_costmaps:=true`は表示用の別コストマップを追加する。
 通常のRViz表示は実際のTEB内部の`/placenav_teb_bridge/local_costmap/costmap`。
 RVizの固定フレームは`navigation.rviz`の`base_link`（ロボット中心の表示）で、`global_frame`には追従しない。
@@ -250,6 +265,7 @@ RVizの固定フレームは`navigation.rviz`の`base_link`（ロボット中心
 ## 検証
 
 `test/test_session_runner.py`で実引数parser・シェル・経路adapterへの受け渡しとプロセス終了処理を検証する。
+`test/test_decompress_depth_bag.py`でcompressedDepthの復号を検証する。
 `test/test_navigation_launch.py`はROS環境でlaunchを展開し、両統合方式・両参照方式・フレーム・既定値を検証する。
 点群・STVLの実ノード検証は`source_costmaps/test/comparison{,_frames}.test`を使用する。
 実機への転送と実走行は未実施。
