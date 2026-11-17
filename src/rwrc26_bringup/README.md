@@ -227,19 +227,20 @@ TEBの終端停止は全モード共通で、遅れた経路・False通知では
 | `image_topic` / `server_host` / `server_port` | `/usb_cam/image_raw` / `127.0.0.1` / `5557` |
 | `max_input_width` / `cloud_stride` | `640` / `4` |
 | `record` / `diagnostics` | `true` / `false` |
-| `bag_dir` | `/home/user/ws/src/cache/noetic/bags` |
-| `bag_prefix` / `bag_buffer_mb` | 空文字 / `512` |
-| `record_topics` | `config/record_topics.yaml` |
+| `bag_dir` | `/home/user/ws/src/PlaceNav/bag`（事前に作成しておく） |
+| `bag_prefix` / `bag_buffer_mb` | `navigation` / `512` |
+| `record_topics` | `navigation.launch`内に列挙した空白区切りのトピック一覧 |
 | `rviz` / `debug_costmaps` | `true` / `false` |
 
-bagと`.session.json`の名前は日本時間の`YYYYMMDD_HHMMSS_ffffff`。
-JSONには有効な起動設定、TEB設定、統合パッケージとブリッジのソース・実行ファイルのSHA256を保存する。
-既存ファイルを上書きせず、`tsukuba`内とそこへのシンボリックリンクは保存先として拒否する。
-Ctrl+C後はbagの確定を待つ。
+記録は`rosbag record -o <bag_dir>/<bag_prefix> --lz4`をそのまま起動する。
+ファイル名は`<bag_prefix>_YYYY-MM-DD-HH-MM-SS.bag`で、時刻は実行環境（コンテナ）のローカル時刻。
+`bag_dir`は自動作成しない。Ctrl+C後はroslaunchがrosbagの確定を待つ。
+起動設定のスナップショットは保存しないので、必要なら`rosparam dump`等で別途残す。
 
-記録するトピックは`record_topics`（既定`config/record_topics.yaml`）だけで決まり、`diagnostics`や`comparison_profile`では増えない。
+記録するトピックは`record_topics`だけで決まり、`diagnostics`や`comparison_profile`では増えない。
+一時的に変える場合は`record_topics:="/odom /tf ..."`で一覧全体を指定する。
 現在のPlaceNavは`--trace-navigation`に未対応なので、その引数は渡さず警告を出す。
-対応する別版を`placenav_src`で指定した場合だけ、trace引数と`/rwrc26/*`の記録を追加する。
+対応する別版を`placenav_src`で指定した場合だけtrace引数を渡す。`/rwrc26/*`を記録するには`record_topics`に追加する。
 診断の有無はモデル・参照方式を切り替えない。最新版TEBの診断配信自体は常時有効。
 
 `debug_costmaps:=true`は表示用の別コストマップを追加する。
@@ -247,7 +248,7 @@ Ctrl+C後はbagの確定を待つ。
 
 ## 検証
 
-`test/test_session_runner.py`で実引数parser・シェル・経路adapterへの受け渡しと記録処理を検証する。
+`test/test_session_runner.py`で実引数parser・シェル・経路adapterへの受け渡しとプロセス終了処理を検証する。
 `test/test_navigation_launch.py`はROS環境でlaunchを展開し、両統合方式・両参照方式・フレーム・既定値を検証する。
 点群・STVLの実ノード検証は`source_costmaps/test/comparison{,_frames}.test`を使用する。
 実機への転送と実走行は未実施。

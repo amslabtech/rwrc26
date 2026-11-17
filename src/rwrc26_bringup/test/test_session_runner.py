@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """No cameras, model inference or robot command publishers are used here."""
-from datetime import datetime, timezone
 import importlib.util
 import json
 import math
@@ -52,14 +51,14 @@ PY
         with self.assertRaises(ValueError):
             runner.navigation_command({'placenav_src': str(self.root), 'topomap_dir': 'route'})
 
-    def test_diagnostics_are_opt_in_and_add_no_recorded_topics(self):
+    def test_diagnostics_are_opt_in(self):
         directory=self.root/'PlaceNav'; directory.mkdir(); (directory/'navigate_whill.sh').touch()
         (directory/'placenav').mkdir()
         (directory/'placenav/parser.py').write_text("parser.add_argument('--trace-navigation', action='store_true')")
         command,_=runner.navigation_command(dict(placenav_src=str(directory),topomap_dir='route',diagnostics=True))
         self.assertIn('--trace-navigation',command)
-        command,_,_=runner.recording_command(self.record_params())
-        self.assertEqual(command[command.index('-O')+2:],['/tf','/odom'])  # duplicates removed, nothing added
+        command,_=runner.navigation_command(dict(placenav_src=str(directory),topomap_dir='route'))
+        self.assertNotIn('--trace-navigation',command)
 
     def test_latest_checkout_receives_navigation_options_and_no_unsupported_trace(self):
         directory = Path(os.environ.get('PLACENAV_TEST_SRC', Path(__file__).resolve().parents[2]))
@@ -145,17 +144,13 @@ PY
             with self.subTest(degrees=degrees), self.assertRaises(ValueError):
                 runner.navigation_command(dict(base, goal_eval_yaw_tolerance_deg=degrees))
 
-    def test_trace_capability_and_recording_follow_selected_checkout(self):
+    def test_trace_capability_follows_selected_checkout(self):
         directory = self.root/'PlaceNav'; (directory/'placenav').mkdir(parents=True)
         parser = directory/'placenav/parser.py'
         parser.write_text("# --trace-navigation is not supported\nparser.add_argument('--device')")
         self.assertFalse(runner.supports_navigation_trace(directory))
-        params = self.record_params(); params.update(placenav_src=str(directory), diagnostics=True)
-        command, _, _ = runner.recording_command(params)
-        self.assertNotIn('/rwrc26/navigation_trace', command)
         parser.write_text("parser.add_argument('--trace-navigation', action='store_true')")
-        command, _, _ = runner.recording_command(params)
-        self.assertIn('/rwrc26/navigation_trace', command)
+        self.assertTrue(runner.supports_navigation_trace(directory))
 
     def test_invalid_image_size_rejected_before_starting_navigation(self):
         directory = self.root/'PlaceNav'; directory.mkdir(); (directory/'navigate_whill.sh').touch()
@@ -365,57 +360,6 @@ Path('adapter.json').write_text(json.dumps(sys.argv[1:]))
             with patch.object(runner.time, 'monotonic', side_effect=[10., 11.]):
                 self.assertEqual(runner.xavier_main(['--xavier', '--wait', '0']), 1)
             start.assert_not_called()
-
-    def record_params(self, directory=None):
-        return {'bag_dir': str(directory or self.root/'bags'), 'topics': ['/tf', '/tf', '/odom'],
-                'cmd_vel_topic': '/local_path/cmd_vel'}
-
-    def test_recording_is_unique_dated_jst_and_keeps_only_requested_topics(self):
-        when = datetime(2026, 10, 29, 9, 30, 40, 123456, tzinfo=timezone.utc)
-        params = self.record_params(); params['bag_prefix'] = 'placenav_unik3d_teb_tsukuba'
-        first, directory, metadata = runner.recording_command(params, when)
-        second, _, _ = runner.recording_command(params, when)
-        name = Path(first[first.index('-O')+1]).name
-        self.assertIn('_20261029_183040_123456_', name)
-        self.assertNotEqual(first[first.index('-O')+1], second[second.index('-O')+1])
-        self.assertEqual(first.count('/tf'), 1)
-        self.assertEqual(first[first.index('-O')+2:], ['/tf', '/odom'])
-        self.assertIn('--lz4', first)
-        self.assertTrue(metadata.name.endswith('.session.json'))
-        self.assertFalse(directory.exists())  # Validation itself never starts recording.
-
-    def test_protected_data_path_and_symlink_are_rejected(self):
-        protected = self.root/'tsukuba'; protected.mkdir()
-        link = self.root/'looks_safe'; link.symlink_to(protected, target_is_directory=True)
-        for directory in (protected/'new', link/'new'):
-            with self.assertRaises(ValueError):
-                runner.recording_command(self.record_params(directory))
-        self.assertFalse((protected/'new').exists())
-
-    def test_empty_prefix_uses_only_jst_timestamp_and_rejects_existing_recordings(self):
-        params = self.record_params(); params['bag_prefix'] = ''
-        when = datetime(2026, 10, 29, 9, 30, 40, 123456, tzinfo=timezone.utc)
-        command, directory, metadata = runner.recording_command(params, when)
-        bag = Path(command[command.index('-O')+1])
-        self.assertEqual(bag.name, '20261029_183040_123456.bag')
-        self.assertEqual(metadata.name, '20261029_183040_123456.session.json')
-        del params['bag_prefix']
-        default_command, _, _ = runner.recording_command(params, when)
-        self.assertEqual(command, default_command)
-        directory.mkdir()
-        for existing in (bag, Path(str(bag)+'.active'), metadata):
-            existing.write_text('keep')
-            with self.assertRaises(ValueError):
-                runner.recording_command(params, when)
-            self.assertEqual(existing.read_text(), 'keep')
-            existing.unlink()
-
-    def test_invalid_recording_prefix_and_topic_are_rejected(self):
-        for prefix in ('../replace_existing', ' ', 'my bag'):
-            params = self.record_params(); params['bag_prefix'] = prefix
-            with self.assertRaises(ValueError): runner.recording_command(params)
-        params = self.record_params(); params['topics'] = ['--all']
-        with self.assertRaises(ValueError): runner.recording_command(params)
 
     def assert_not_running(self, pid):
         path = Path('/proc')/str(pid)/'stat'

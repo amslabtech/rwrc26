@@ -174,11 +174,23 @@ class NavigationLaunchTest(unittest.TestCase):
         for key, value in dict(start_node_idx=5, goal_node_idx=31, lookahead=2, nomad_seed=7,
                                img_size=[96, 96], recompute_place_recognition_db=True).items():
             self.assertEqual(params['/placenav_runner/'+key], value)
-        self.assertNotIn('/session_recorder/diagnostic_topics', params)
-        self.assertNotIn('/session_recorder/comparison_topics', params)
-        self.assertIn('/toponav/goal_evaluation', params['/session_recorder/topics'])
-        self.assertIn('/toponav/local_goal_pose', params['/session_recorder/topics'])
-        self.assertTrue(params['/session_recorder/diagnostics'])
+        self.assertTrue(params['/placenav_runner/diagnostics'])
+
+    def test_recording_is_a_plain_rosbag_node_with_only_the_listed_topics(self):
+        config, params = self.load('diagnostics:=true', 'bag_dir:=/tmp/bags', 'bag_prefix:=trial')
+        recorder, = [n for n in config.nodes if n.name == 'session_recorder']
+        self.assertEqual((recorder.package, recorder.type), ('rosbag', 'record'))
+        self.assertFalse(any(name.startswith('/session_recorder/') for name in params))
+        args = recorder.args.split()
+        self.assertEqual(args[:5], ['-o', '/tmp/bags/trial', '--lz4', '--buffsize', '512'])
+        topics = args[5:]
+        self.assertIn('/toponav/goal_evaluation', topics)
+        self.assertIn('/toponav/local_goal_pose', topics)
+        self.assertFalse(any(t.startswith('/rwrc26/') for t in topics))  # diagnostics add no topics
+        self.assertTrue(all(t.startswith('/') for t in topics))
+        self.assertEqual(len(topics), len(set(topics)))
+        config, _ = self.load('record:=false')
+        self.assertFalse(any(n.name == 'session_recorder' for n in config.nodes))
 
     def test_invalid_reference_controls_fail_before_nodes_start(self):
         for argument in ('reference_mode:=typo', 'path_timeout:=-1', 'path_timeout:=nan', 'path_timeout:=inf'):

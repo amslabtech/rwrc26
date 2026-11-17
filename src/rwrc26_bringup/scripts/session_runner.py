@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""ROS launch adapters for the existing navigation script and dated bag recording.
+"""ROS launch adapter for the existing navigation script.
 
+navigate.py takes command-line options, while navigation.launch keeps its settings as ROS
+parameters (placenav.yaml plus explicit launch overrides). This node turns those parameters
+into the navigate_whill.sh command line and stops the whole process group on shutdown.
 Only main() and xavier_main() import rospy so command construction and process
 cleanup can be tested without ROS, model loading, a camera, or robot command publishers.
 
@@ -8,19 +11,14 @@ On the Xavier (split inference), `session_runner.py --xavier` reads the paramete
 navigation.launch put under /placenav_runner on parrot and starts navigate.py with the
 same command line, so both machines can never disagree on route, models or indices.
 """
-from datetime import datetime, timedelta, timezone
 import ast
-import hashlib
-import json
 import math
 import os
 from pathlib import Path
-import re
 import signal
 import subprocess
 import threading
 import time
-import uuid
 
 
 def supports_navigation_trace(directory):
@@ -139,39 +137,6 @@ def xavier_navigation_command(params, placenav_src):
     return command+['--no-path-adapter'], directory
 
 
-def recording_command(params, now=None):
-    requested = Path(params['bag_dir']).expanduser()
-    directory = requested.resolve()
-    # Both a direct protected path and a symlink into the protected data tree
-    # must be rejected, even when this package is copied to the robot workspace.
-    if 'tsukuba' in requested.absolute().parts or 'tsukuba' in directory.parts:
-        raise ValueError('Recording inside tsukuba is prohibited')
-    prefix = str(params.get('bag_prefix', ''))
-    if not re.fullmatch(r'[A-Za-z0-9_-]*', prefix):
-        raise ValueError('bag_prefix must be empty or contain only letters, digits, _ and -')
-    topics = list(dict.fromkeys(params['topics']))
-    if params.get('diagnostics', False) and supports_navigation_trace(params.get('placenav_src', '')):
-        topics = list(dict.fromkeys(topics + ['/rwrc26/navigation_metadata', '/rwrc26/navigation_trace',
-                                             '/rwrc26/path_adapter_trace', '/rwrc26/teb_trace']))
-    if not topics or any(not isinstance(t, str) or not t.startswith('/') or any(c.isspace() for c in t) for t in topics):
-        raise ValueError('topics must be a nonempty list of absolute ROS topic names')
-    buffer_mb = int(params.get('buffer_mb', 512))
-    if buffer_mb < 1:
-        raise ValueError('buffer_mb must be positive')
-    now = now or datetime.now(timezone(timedelta(hours=9)))
-    if now.tzinfo is None:
-        raise ValueError('Recording timestamp must include a timezone')
-    timestamp = now.astimezone(timezone(timedelta(hours=9))).strftime('%Y%m%d_%H%M%S_%f')
-    name = prefix+'_'+timestamp+'_'+uuid.uuid4().hex[:8] if prefix else timestamp
-    bag = directory/(name+'.bag')
-    metadata = directory/(name+'.session.json')
-    # An exclusive metadata reservation protects older recordings, including
-    # timestamp-only names. rosbag creates/finalizes its own .active file.
-    if bag.exists() or Path(str(bag)+'.active').exists() or metadata.exists():
-        raise ValueError('Recording path already exists')
-    return ['rosbag', 'record', '--lz4', '--buffsize', str(buffer_mb), '-O', str(bag)]+topics, directory, metadata
-
-
 def stop_process(process):
     """Stop only the process group created by this runner, including children."""
     for sig, timeout in ((signal.SIGINT, 5), (signal.SIGTERM, 2), (signal.SIGKILL, 1)):
@@ -195,76 +160,21 @@ def stop_process(process):
     process.wait()
 
 
-def package_fingerprints(placenav_src=None):
-    """Hash deployed configuration, code and actual installed executables."""
-    import rospkg
-    import roslib.packages
-    packages = rospkg.RosPack()
-    hashes = {}
-    executables = {'source_costmaps': ('cloud_gate_node', 'source_costmaps_node', 'cloud_batch.py'),
-                   'rwrc26_bringup': ('session_runner.py',),
-                   'placenav_teb_bridge': ('placenav_teb_bridge_node',)}
-    for name in executables:
-        root = Path(packages.get_path(name))
-        paths = [p for folder in ('config', 'launch', 'scripts', 'src', 'include')
-                 for p in (root/folder).rglob('*') if p.is_file() and '__pycache__' not in p.parts]
-        paths += [p for p in (root/'package.xml', root/'CMakeLists.txt') if p.is_file()]
-        if placenav_src:
-            selected = Path(placenav_src).expanduser().resolve()
-            if name == 'placenav_teb_bridge':
-                paths += [p for folder in ('src', 'config', 'launch')
-                          for p in (selected/name/folder).rglob('*') if p.is_file()]
-            elif name == 'rwrc26_bringup':
-                paths += [selected/relative for relative in (
-                    'navigate_whill.sh', 'run_gnm_path_adapter_whill.sh', 'placenav/parser.py',
-                    'placenav/navigate.py', 'placenav/gnm_path_adapter.py', 'config/robots.yaml',
-                    'config/models.yaml') if (selected/relative).is_file()]
-        for executable in executables[name]:
-            paths += [Path(p) for p in (roslib.packages.find_node(name, executable) or [])]
-        if name == 'source_costmaps':
-            paths += [p.parent.parent/'libsource_costmaps_cloud.so' for p in list(paths)
-                      if (p.parent.parent/'libsource_costmaps_cloud.so').is_file()]
-        for path in sorted(set(paths)):
-            digest = hashlib.sha256()
-            with path.open('rb') as stream:
-                for block in iter(lambda: stream.read(1024*1024), b''):
-                    digest.update(block)
-            hashes[str(path)] = digest.hexdigest()
-    return hashes
-
-
 def main():
     import rospy
     rospy.init_node('session_runner')
-    params = rospy.get_param('~')
-    role = params.get('role')
     try:
-        if role == 'navigation':
-            command, directory = navigation_command(params)
-            if params.get('diagnostics', False) and '--trace-navigation' not in command:
-                rospy.logwarn('Selected PlaceNav has no --trace-navigation support; recording available ROS diagnostics only.')
-        elif role == 'record':
-            command, directory, metadata = recording_command(params)
-            directory.mkdir(parents=True, exist_ok=True)
-            saved = {'timestamp_timezone': 'Asia/Tokyo', 'command': command, 'parameters': {},
-                     'sha256': package_fingerprints(params.get('placenav_src'))}
-            for key in ('/placenav_runner', '/unidepth_ros_adapter', '/obstacles/d435_gate',
-                        '/obstacles/unik3d_gate', '/obstacles/comparison', '/placenav_teb_bridge'):
-                saved['parameters'][key] = rospy.get_param(key, {})
-            with metadata.open('x') as stream:
-                json.dump(saved, stream, indent=2); stream.write('\n')
-            rospy.loginfo('Recording bag: %s', command[command.index('-O')+1])
-            rospy.loginfo('Session settings: %s', metadata)
-        else:
-            raise ValueError('role must be navigation or record')
+        command, directory = navigation_command(rospy.get_param('~'))
     except (KeyError, TypeError, ValueError, OSError, SyntaxError) as error:
         rospy.logfatal('Session configuration: %s', error)
         return 1
-    rospy.loginfo('Starting %s in %s', role, directory)
+    if rospy.get_param('~diagnostics', False) and '--trace-navigation' not in command:
+        rospy.logwarn('Selected PlaceNav has no --trace-navigation support; recording available ROS diagnostics only.')
+    rospy.loginfo('Starting navigation in %s', directory)
     try:
         process = subprocess.Popen(command, cwd=str(directory), start_new_session=True)
     except OSError as error:
-        rospy.logfatal('Could not start %s: %s', role, error)
+        rospy.logfatal('Could not start navigation: %s', error)
         return 1
     lock = threading.Lock()
     def cleanup():
@@ -276,9 +186,9 @@ def main():
             status = process.poll()
             if status is not None:
                 if status:
-                    rospy.logerr('%s exited with status %s', role, status)
+                    rospy.logerr('navigation exited with status %s', status)
                 else:
-                    rospy.loginfo('%s finished', role)
+                    rospy.loginfo('navigation finished')
                 return 0 if status == 0 else 1
             time.sleep(.1)  # Wall time: shutdown works even when ROS time pauses.
         return 0
