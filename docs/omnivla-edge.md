@@ -59,21 +59,28 @@ OmniVLA-edgeには姿勢の信頼度を渡す入力や調整パラメータは�
 ### 実機・bag再生で使う（実験用、既定は無効）
 
 ```bash
-# bringup（parrot、Xavier分割でも同じ。session_runnerが--wp-goal-poseを付ける）
-roslaunch rwrc26_bringup navigation.launch wp_model:=omnivla_edge local_pose:=true wp_goal_pose:=true ...
+# bringup（parrot、Xavier分割でも同じ。session_runnerが引数を付ける）
+roslaunch rwrc26_bringup navigation.launch wp_model:=omnivla_edge local_pose:=true \
+    wp_goal_pose:=true heading_correction:=sift_shift ...
 # 単独CLI
-./navigate_whill.sh --topomap-dir ROUTE --wp-model omnivla_edge --local-pose --wp-goal-pose ...
+./navigate_whill.sh --topomap-dir ROUTE --wp-model omnivla_edge --local-pose --wp-goal-pose \
+    --heading-correction sift_shift ...
 ```
 
-- `OmniVLAEdgeAdapter`に`goal_pose=(x, y, yaw)`を渡すとmodality 5（姿勢＋画像）で推論し、渡さなければ従来どおり
-  modality 6（画像のみ）。30 m超の距離は上流と同じく30 mに切り詰める。
-- navigate.pyは、`/toponav/local_goal_pose`と同じ`LocalPoseTracker.goal(subgoal)`を、初期化済み・odom連続・
-  その画像時刻で更新済みのときだけ渡す。それ以外（初期化前、odom不連続で追跡が無効になった後など）は画像のみに戻り、
-  切り替わりをログに出す（`OmniVLA-edge goal: subgoal image and local pose` / `... only`）。
-- `wp_model:=omnivla_edge`と`local_pose:=true`が必須（`session_runner.py`とparserが起動前に拒否する）。
-- 到達時の向きの補正（下記の「画像で補正」）は実装していない。tracker出力をそのまま入れるので、下表の
-  「画像＋tracker」に相当する（オフラインでは画像のみより悪化）。`tsukuba_lidar.bag`の0〜120 sの再生では、
-  経路長の中央値が0.67 m（画像のみ）から0.81 mに伸び、オフラインの傾向と一致した。
+- `wp_goal_pose`：`OmniVLAEdgeAdapter`に`goal_pose=(x, y, yaw)`を渡してmodality 5（姿勢＋画像）で推論する。
+  渡すのは`/toponav/local_goal_pose`と同じ`LocalPoseTracker.goal(subgoal)`で、初期化済み・odom連続・その画像時刻で
+  更新済みのときだけ。それ以外は画像のみ（modality 6）に戻り、切り替わりをログに出す。30 m超は上流と同じく切り詰める。
+  `wp_model:=omnivla_edge`と`local_pose:=true`が必須。
+- `heading_correction`：サブゴール切り替え（XY基準の置き直し）ごとに、その画像とノード画像の向きの差を別スレッドで
+  測り、局所姿勢の向きを「ノードの記録yaw＋差」に置き直す（詳細は`doc/LOCAL_POSE.md`）。補正の適用
+  （`LocalPoseTracker.apply_heading`）と推定方法（`placenav/heading_correction.py`の推定器）は分かれていて、
+  推定器を1つ登録すれば名前で切り替えられる。現状の`sift_shift`はSIFTの水平ずれと水平画角
+  （`robots.yaml`の`camera_hfov_deg: 140`、odomから合わせ込んだ値で校正ではない）による簡易法。
+- `tsukuba_lidar.bag` 0〜730 sの再生（`wp_goal_pose`＋`heading_correction:=sift_shift`）：到達98回中90回で補正、
+  結果は0.3〜0.4 s遅れで適用、1周期の時間は変わらない（RTX 3080）。下表「画像＋tracker（到達時に向きを画像で補正）」の
+  オフライン再現とほぼ同じ結果になった（通過位置の正解で予測方向の誤差4.2° / 13.9°、オフラインは4.1° / 13.6°。
+  局所2D剛体変換の正解で4.9° / 17.1°、オフラインは4.7° / 16.8°）。実際に出たwaypointと、記録した姿勢から
+  オフラインで計算し直したwaypointは一致した（終点の差の中央値0.0 cm）。Xavierでの処理時間は未計測。
 
 ### 模擬誤差（同一走行のbag再生、744サンプル・旋回147）
 

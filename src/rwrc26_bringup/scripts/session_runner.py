@@ -76,6 +76,18 @@ def navigation_command(params):
         if str(params.get('wp_model', 'nomad')) != 'omnivla_edge' or not params.get('local_pose', False):
             raise ValueError('wp_goal_pose requires wp_model omnivla_edge and local_pose')
         command.append('--wp-goal-pose')
+    heading = str(params.get('heading_correction', 'none'))
+    if not heading or any(c.isspace() for c in heading):
+        raise ValueError('heading_correction must be none or an estimator name')
+    if heading != 'none':
+        if not params.get('local_pose', False):
+            raise ValueError('heading_correction requires local_pose')
+        command += ['--heading-correction', heading]
+        if 'camera_hfov_deg' in params:
+            hfov = float(params['camera_hfov_deg'])
+            if not math.isfinite(hfov) or not 0 < hfov < 360:
+                raise ValueError('camera_hfov_deg must be in (0, 360)')
+            command += ['--camera-hfov-deg', str(hfov)]
     reset = params.get('local_pose_reset', True)
     if not isinstance(reset, bool):
         raise ValueError('local_pose_reset must be a YAML boolean')

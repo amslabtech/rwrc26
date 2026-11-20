@@ -138,6 +138,36 @@ PY
                 patch('sys.stderr'), self.assertRaises(SystemExit):
             parser.parse_args()
 
+    def test_heading_correction_reaches_parser_and_requires_local_pose(self):
+        directory = Path(os.environ.get('PLACENAV_TEST_SRC', Path(__file__).resolve().parents[2]))
+        if str(directory) not in sys.path:
+            sys.path.insert(0, str(directory))  # parser imports placenav.heading_correction
+        spec = importlib.util.spec_from_file_location('selected_placenav_parser_heading', directory/'placenav/parser.py')
+        parser = importlib.util.module_from_spec(spec); spec.loader.exec_module(parser)
+        base = dict(placenav_src=str(directory), topomap_dir='route', motion_model='odometry', local_pose=True)
+        required = ['--robot', 'whill', '--robot-config-path', 'robots.yaml',
+                    '--model-config-path', 'models.yaml', '--topomap-base-dir', 'maps',
+                    '--model-weight-dir', 'weights']
+        for options, method, hfov in (({}, 'none', None),
+                                      ({'heading_correction': 'sift_shift'}, 'sift_shift', None),
+                                      ({'heading_correction': 'sift_shift', 'camera_hfov_deg': 128.5},
+                                       'sift_shift', 128.5)):
+            with self.subTest(options=options):
+                command, _ = runner.navigation_command(dict(base, **options))
+                self.assertEqual('--heading-correction' in command, method != 'none')
+                with patch.object(sys, 'argv', ['navigate.py']+required+command[2:]):
+                    args = parser.parse_args()
+                self.assertEqual((args.heading_correction, args.camera_hfov_deg), (method, hfov))
+        for invalid in ({'local_pose': False}, {'heading_correction': ''}, {'heading_correction': 'a b'},
+                        {'camera_hfov_deg': 0}, {'camera_hfov_deg': float('nan')}):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                runner.navigation_command(dict(base, **dict({'heading_correction': 'sift_shift'}, **invalid)))
+        for argv in (['--topomap-dir', 'route', '--heading-correction', 'sift_shift'],
+                     ['--topomap-dir', 'route', '--local-pose', '--heading-correction', 'no_such_method']):
+            with self.subTest(argv=argv), patch.object(sys, 'argv', ['navigate.py']+required+argv), \
+                    patch('sys.stderr'), self.assertRaises(SystemExit):
+                parser.parse_args()
+
     def test_invalid_motion_options_are_rejected(self):
         directory = self.root/'PlaceNav'; directory.mkdir(); (directory/'navigate_whill.sh').touch()
         for options in ({'motion_model': 'typo'}, {'odom_max_gap': 0},

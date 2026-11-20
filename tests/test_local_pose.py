@@ -422,6 +422,48 @@ class LocalPoseTest(unittest.TestCase):
             np.testing.assert_array_equal(before, after)
         self.assertEqual((selector.subgoal, selector.status), (goal, status))
 
+    def test_heading_measurement_sets_heading_and_rotates_motion_since_measurement(self):
+        tracker = self.tracker(); tracker.update(1, sample(10), 0)
+        pose_at_measurement = tuple(tracker.mean)  # (2, 0, 0): heading assumed from the map
+        tracker.update(1, sample(11, x=1), 0)      # 1 m forward with the wrong heading
+        delta = tracker.apply_heading(1, sample(10).stamp_ns, 0, pose_at_measurement, dpsi=.2, std=.05)
+        self.assertAlmostEqual(delta, .2)
+        np.testing.assert_allclose(tracker.mean, [2+math.cos(.2), math.sin(.2), .2], atol=1e-12)
+        self.assertAlmostEqual(tracker.covariance[2, 2], .05**2)
+        np.testing.assert_allclose(tracker.covariance[:2, 2], 0)
+        self.assertEqual((tracker.heading_count, tracker.status), (1, 'HEADING_MEASURED'))
+        # Later motion follows the corrected heading.
+        tracker.update(1, sample(12, x=2), 0)
+        np.testing.assert_allclose(tracker.mean[:2], [2+2*math.cos(.2), 2*math.sin(.2)], atol=1e-12)
+        self.assertEqual(tracker.status, 'TRACKING_ASSUMED_ANCHOR')
+
+    def test_late_heading_after_xy_anchor_rotates_about_the_anchor(self):
+        tracker = self.tracker(); tracker.update(1, sample(10), 0)
+        pose_at_measurement = tuple(tracker.mean)
+        tracker.update(1, sample(11, x=1), 0)
+        tracker._set_position_anchor(2, sample(11).stamp_ns, [4., .5], np.eye(2)*.25, 'ARRIVAL_POSITION_RESET')
+        tracker.update(2, sample(12, x=2), 0)    # 1 m after the anchor
+        tracker.apply_heading(1, sample(10).stamp_ns, 0, pose_at_measurement, dpsi=-.3, std=.05)
+        np.testing.assert_allclose(tracker.mean, [4+math.cos(-.3), .5+math.sin(-.3), -.3], atol=1e-12)
+
+    def test_heading_measurement_rejected_without_changing_the_track(self):
+        tracker = self.tracker(); tracker.update(1, sample(10), 0)
+        pose = tuple(tracker.mean)
+        tracker.update(1, sample(11, x=1), 0)
+        before = tracker.mean.copy(), tracker.covariance.copy()
+        for args in ((1, sample(10).stamp_ns, 1, pose, .2, .05),           # other odometry epoch
+                     (1, sample(12).stamp_ns, 0, pose, .2, .05),           # newer than the track
+                     (1, sample(10).stamp_ns, 0, pose, float('nan'), .05),
+                     (1, sample(10).stamp_ns, 0, (2, 0, float('inf')), .2, .05)):
+            with self.subTest(args=args):
+                self.assertIsNone(tracker.apply_heading(*args))
+                np.testing.assert_array_equal(tracker.mean, before[0])
+                np.testing.assert_array_equal(tracker.covariance, before[1])
+        tracker.invalidate('ODOMETRY_DISCONTINUITY')
+        self.assertIsNone(tracker.apply_heading(1, sample(10).stamp_ns, 0, pose, .2, .05))
+        self.assertEqual(tracker.heading_count, 0)
+        self.assertIsNone(self.tracker().apply_heading(1, sample(10).stamp_ns, 0, pose, .2, .05))
+
     def test_duplicate_and_stationary_updates_do_not_shrink_covariance(self):
         tracker = self.tracker();tracker.update(1, sample(10), 0)
         mean, covariance = tracker.mean.copy(), tracker.covariance.copy()

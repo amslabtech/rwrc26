@@ -162,6 +162,13 @@ def parse_args():
                         help='Experimental, OmniVLA-edge only: also feed the --local-pose relative '
                              'subgoal pose (upstream modality 5, pose and image). Falls back to the '
                              'image-only goal while the local pose is not valid')
+    parser.add_argument('--heading-correction', default='none',
+                        help='Measure the heading at subgoal switches and set the --local-pose heading: '
+                             "'none' (default) or an estimator from placenav.heading_correction "
+                             "(e.g. 'sift_shift': horizontal shift of image matches)")
+    parser.add_argument('--camera-hfov-deg', type=positive_float,
+                        help='Equidistant horizontal field of view for --heading-correction '
+                             '(default: camera_hfov_deg in the robot config)')
     resets = parser.add_mutually_exclusive_group()
     resets.add_argument('--local-pose-reset', dest='local_pose_reset', action='store_true', default=True,
                         help='Enable local XY anchors at goal switches and recovery (default)')
@@ -237,6 +244,12 @@ def parse_args():
         parser.error('--local-pose requires --motion-model odometry')
     if args.wp_goal_pose and (args.wp_model != 'omnivla_edge' or not args.local_pose):
         parser.error('--wp-goal-pose requires --wp-model omnivla_edge and --local-pose')
+    if args.heading_correction != 'none':
+        from placenav.heading_correction import heading_estimator_names
+        if args.heading_correction not in heading_estimator_names():
+            parser.error(f"--heading-correction must be 'none' or one of {heading_estimator_names()}")
+        if not args.local_pose:
+            parser.error('--heading-correction requires --local-pose')
     if args.goal_eval_yaw_tolerance > math.pi:
         parser.error('--goal-eval-yaw-tolerance must not exceed pi')
     if args.goal_eval_neighborhood_radius < args.goal_eval_position_tolerance:

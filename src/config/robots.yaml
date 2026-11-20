@@ -31,6 +31,10 @@ whill:
 
   frame_rate: 5 # Hz
   camera_height: 0.0 # m; TODO: replace with the measured optical-center height
+  # /usb_cam horizontal field of view for --heading-correction, equidistant model with the
+  # principal point at the image centre. Not a calibration: fitted to odometry yaw changes
+  # (140 deg on 2026-11-07, 128 deg on 2026-10-17). Replace after calibrating the camera.
+  camera_hfov_deg: 140.0
 
   # topic names
   vel_teleop_topic: "/local_path/cmd_vel" # existing manual control remains external to PlaceNav

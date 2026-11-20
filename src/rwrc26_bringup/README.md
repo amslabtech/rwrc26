@@ -172,6 +172,7 @@ roslaunch rwrc26_bringup navigation_debug.launch \
 | `subgoal_mode` / `filter_mode` | `place_recognition` / `bayesian` |
 | `motion_model` | `odometry`。`legacy` で従来の移動更新 |
 | `local_pose` | `true`。局所2D姿勢と相対画像ゴールを診断出力し、RVizのImage Goalに方向・撮影方向・IDを表示。`false`で推定・出力を無効。画像選択には使わない。制御にも使わない（`wp_goal_pose:=true`のときだけOmniVLA-edgeの入力に使う） |
+| `heading_correction` / `camera_hfov_deg` | `none` / 空（ロボット設定の`camera_hfov_deg`）。`local_pose:=true`のとき、サブゴール切り替え（XY基準の置き直し）ごとに画像から向きを測り、局所姿勢の向きを置き直す。推定方法は名前で選ぶ（現状は`sift_shift`のみ、`placenav/heading_correction.py`）。`docs/omnivla-edge.md`参照 |
 | `wp_goal_pose` | `false`。実験用。`wp_model:=omnivla_edge`かつ`local_pose:=true`のとき、相対サブゴール姿勢もOmniVLA-edgeへ入力する（上流modality 5）。局所姿勢が無効な間は画像のみに戻る。`docs/omnivla-edge.md`参照 |
 | `local_pose_reset` | YAML初期値`true`。全モードの通常画像切り替え時と、条件を満たした救済時のXY補正。`false`でも初期基準・odom追跡・相対ゴール出力を維持し、以後のXY補正を止める。向き・1D beliefは補正しない |
 | `odom_max_gap` / `odom_noise` | `0.2 s` / `0.1`。補間の最大間隔 / 走行1mあたりの分散が`odom_noise²` m²となるノイズ係数 |

@@ -3,7 +3,9 @@ import torch
 import yaml
 import copy
 import argparse
+import math
 import time
+from collections import OrderedDict
 
 from pathlib import Path
 from typing import List, Tuple, Dict
@@ -108,7 +110,12 @@ class PlaceNavNode:
             args.wp_model,
             args.img_size,
             )
-        
+
+        self.heading_corrector = None
+        self._raw_frames = OrderedDict()
+        if getattr(args, 'heading_correction', 'none') != 'none':
+            self._setup_heading_correction(args)
+
         self._setup_ros()
 
         if args.subgoal_mode == 'place_recognition':
@@ -267,6 +274,52 @@ class PlaceNavNode:
         self.context_size = model_config["context_size"]
         self.context_queue: List[Dict[Time, torch.Tensor]] = []
 
+    def _setup_heading_correction(self, args):
+        """Measure the heading at subgoal switches with the selected estimator (off-thread)."""
+        from placenav.heading_correction import AsyncHeadingCorrector, make_heading_estimator
+        hfov = args.camera_hfov_deg or self.robot_config.get('camera_hfov_deg')
+        if hfov is None:
+            raise ValueError('--heading-correction needs --camera-hfov-deg or camera_hfov_deg in the robot config')
+        estimator = make_heading_estimator(args.heading_correction, self.topomap_img_dir,
+                                           self.topomap_filenames, camera_hfov_deg=float(hfov))
+        report = lambda request, error: rospy.logwarn('Heading estimate for node %s failed: %s',
+                                                      request.node_idx, error)
+        self.heading_corrector = AsyncHeadingCorrector(estimator, on_error=report)
+        rospy.loginfo('Heading correction at subgoal switches: %s (camera HFOV %.1f deg)',
+                      args.heading_correction, float(hfov))
+
+    def _request_heading(self, stamp):
+        """Ask for the heading at the node the tracker was just anchored to."""
+        corrector, tracker = getattr(self, 'heading_corrector', None), self.local_pose_tracker
+        if corrector is None or tracker is None or tracker.mean is None:
+            return
+        with self.obs_lock:
+            image = self._raw_frames.get(stamp.to_nsec())
+        if image is None:
+            rospy.logwarn_throttle(5, 'No retained image for a heading measurement')
+            return
+        from placenav.heading_correction import HeadingRequest
+        corrector.submit(HeadingRequest(node_idx=int(tracker.anchor_node), stamp_ns=tracker.last_odometry.stamp_ns,
+                                        epoch=tracker.epoch, image=image,
+                                        tracker_pose=tuple(float(v) for v in tracker.mean)))
+
+    def _apply_heading_measurements(self):
+        corrector, tracker = getattr(self, 'heading_corrector', None), self.local_pose_tracker
+        if corrector is None or tracker is None:
+            return
+        for measurement in corrector.poll():
+            request, estimate = measurement.request, measurement.estimate
+            delta = tracker.apply_heading(request.node_idx, request.stamp_ns, request.epoch,
+                                          request.tracker_pose, estimate.dpsi, estimate.std)
+            if delta is None:
+                rospy.logwarn('Heading measurement for node %s not applied (tracker reset or invalid)',
+                              request.node_idx)
+                continue
+            late = (tracker.last_odometry.stamp_ns - request.stamp_ns) / 1e9
+            rospy.loginfo('Heading at node %s: dpsi %+.1f deg (%s, support %d); heading changed %+.1f deg, %.2f s late',
+                          request.node_idx, math.degrees(estimate.dpsi), measurement.method,
+                          estimate.support, math.degrees(delta), late)
+
     def _setup_ros(self):
         self.obs_lock = Lock()
         self.odom_lock = Lock()
@@ -345,6 +398,11 @@ class PlaceNavNode:
         img = bridge.imgmsg_to_cv2(msg, desired_encoding="rgb8")
         vpr_img = self._vpr_transform(img).unsqueeze(0)
         with self.obs_lock:
+            if getattr(self, 'heading_corrector', None) is not None:
+                # Full image for heading measurements; kept apart from the copied context.
+                self._raw_frames[msg.header.stamp.to_nsec()] = img
+                while len(self._raw_frames) > self.context_size + 2:
+                    self._raw_frames.popitem(last=False)
             if (self.motion_model == 'odometry' and self.context_queue and
                     msg.header.stamp < self.context_queue[-1]['timestamp']):
                 self.context_queue.clear()
@@ -552,12 +610,14 @@ class PlaceNavNode:
                         if self.local_pose_tracker is not None:
                             from placenav.local_pose_ros import goal_pose_message
                             self.local_pose_tracker.update(closest_node_idx, odometry, self._last_odom_epoch)
+                            self._apply_heading_measurements()
                             if self.local_pose_tracker.correct_subgoal_switch(
                                     self.goal_selector, previous_goal, closest_node_idx,
                                     enabled=args.local_pose_reset):
                                 rospy.loginfo('Local pose XY anchor -> node %s (%s); heading retained',
                                               self.local_pose_tracker.anchor_node,
                                               self.local_pose_tracker.status)
+                                self._request_heading(current_obs_timestamp)
                             elif self.local_pose_tracker.correct_recovery(
                                     self.goal_selector, closest_node_idx, enabled=args.local_pose_reset):
                                 rospy.logwarn('Local pose XY reference corrected near node %s after recovery; heading retained',

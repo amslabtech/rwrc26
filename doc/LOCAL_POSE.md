@@ -10,7 +10,7 @@ VPR・1D belief・サブゴール更新・速度指令へこの推定を戻す�
 `local_pose_reset:=true`で、全選択モードの通常画像切り替え時に局所XY基準を補正する。
 `false`なら通常切り替え・リカバリーのXY補正をともに止め、初期基準からodom追跡を続ける。
 実機・debug launchでは`arrival`、局所姿勢出力、XYリセットが既定で有効。
-向きはリセットせず、odomによる追跡を継続する。
+向きはリセットせず、odomによる追跡を継続する（`heading_correction`を指定したときだけ、到達時に画像から測った向きで置き直す。下記）。
 `arrival` / `passage`のリカバリー確定時には、局所位置とbeliefが大きく矛盾する場合だけ
 XY基準を補正する。条件と制限は後述。
 不連続後の自動再局在はまだ実装していない。OmniVLA-edgeへは、実験用の`wp_goal_pose:=true`（CLIは`--wp-goal-pose`）
@@ -188,6 +188,21 @@ nearestは中点付近、passageは通過後、arrivalも許容エリア内で�
 同一姿勢の重複は従来どおり許容する。
 位置ジャンプの判定には`最大速度×時間差 + 0.05m`の許容幅を使い、
 短い時刻間隔の揺れで小さな移動を不連続と誤認しにくくする。入力odomの位置・時刻は変更しない。
+
+## 向きの測定による置き直し（任意）
+
+`heading_correction:=sift_shift`（CLIは`--heading-correction sift_shift`、既定`none`）で、通常のサブゴール切り替えで
+XY基準を置き直した画像について、そのノードの記録画像との向きの差`dpsi`を別スレッドで測り、向きを
+「ノードの記録yaw＋`dpsi`」に置き直す。測定と適用は分かれている。
+
+- 適用（`LocalPoseTracker.apply_heading`）：測定した画像時刻の局所姿勢を基準に、そこからの向きの変化量を求める。
+  結果が届くまでに進んだ分は古い向きで積分されているので、その画像時刻の位置（以後にXY基準の置き直しがあれば
+  その位置）を中心に同じ角度だけ回転させる。向きの分散は測定の分散で置き換え、XYとの相関は消す。
+  odom世代の変化・追跡の無効化・未来の時刻・非有限値では適用しない。`status`はその画像だけ`HEADING_MEASURED`。
+- 測定（`placenav/heading_correction.py`）：`HeadingEstimator`を継承し`estimate(image_rgb, node_idx)`で
+  `HeadingEstimate(dpsi, std, support)`を返すクラスを`register_heading_estimator`で登録すれば、名前で選べる。
+  現状の`sift_shift`は、SIFT対応点の水平ずれの最頻値を等距離射影の水平画角（`camera_hfov_deg`）で角度に直す簡易法で、
+  カメラは未校正。厳密な方法（校正したカメラでの5点法など）に替えるときは、推定器を1つ追加するだけでよい。
 
 ## 座標と共分散
 

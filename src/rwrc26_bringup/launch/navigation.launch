@@ -20,6 +20,10 @@
   <arg name="local_pose_reset" default=""/>
   <!-- Experimental, wp_model:=omnivla_edge with local_pose: also feed the relative subgoal pose. -->
   <arg name="wp_goal_pose" default="false"/>
+  <!-- Heading measurement at subgoal switches for local_pose: none or an estimator name
+       (placenav/heading_correction.py, e.g. sift_shift). Empty camera_hfov_deg = robot config. -->
+  <arg name="heading_correction" default="none"/>
+  <arg name="camera_hfov_deg" default=""/>
   <arg name="subgoal_update" default="arrival"/>
   <arg name="pass_threshold" default=""/>
   <arg name="pass_confirmations" default=""/>
@@ -178,6 +182,8 @@
     <param name="local_pose" value="$(arg local_pose)" type="bool"/>
     <param if="$(eval arg('local_pose_reset') != '')" name="local_pose_reset" value="$(arg local_pose_reset)" type="bool"/>
     <param name="wp_goal_pose" value="$(arg wp_goal_pose)" type="bool"/>
+    <param name="heading_correction" value="$(arg heading_correction)"/>
+    <param if="$(eval arg('camera_hfov_deg') != '')" name="camera_hfov_deg" value="$(arg camera_hfov_deg)" type="double"/>
     <param name="subgoal_update" value="$(arg subgoal_update)"/>
     <param if="$(eval arg('pass_threshold') != '')" name="pass_threshold" value="$(arg pass_threshold)" type="double"/>
     <param if="$(eval arg('pass_confirmations') != '')" name="pass_confirmations" value="$(arg pass_confirmations)" type="int"/>

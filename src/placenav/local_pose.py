@@ -2,6 +2,8 @@
 
 The first node is an assumed anchor, not a geometric visual measurement.
 Alternative global hypotheses remain in the existing topological posterior.
+Optional heading measurements (placenav.heading_correction) can set the heading;
+how they are estimated is kept out of this module.
 """
 from dataclasses import dataclass
 import math
@@ -32,7 +34,8 @@ class LocalPoseTracker:
     """Propagate a single assumed map-to-live alignment, at image timestamps.
 
     Ordinary goal switches and inconsistent confirmed recovery can reanchor XY.
-    Heading continues to follow odometry. Resets can be disabled independently.
+    Heading follows odometry unless apply_heading() receives a measurement.
+    Resets can be disabled independently.
     A discontinuity invalidates it until restart; corrections cannot revive it.
     """
     def __init__(self, motion, config=None):
@@ -45,6 +48,8 @@ class LocalPoseTracker:
         self.anchor_node = None
         self.anchor_stamp_ns = None
         self.anchor_probability = None
+        self.anchor_xy = None
+        self.heading_count = 0
         self.switch_count = 0
         self.arrival_count = 0
         self.recovery_count = 0
@@ -88,6 +93,7 @@ class LocalPoseTracker:
         self.epoch = epoch
         self.anchor_node = int(closest_node)
         self.anchor_stamp_ns = odometry.stamp_ns
+        self.anchor_xy = self.mean[:2].copy()
         self.continuous = True
         self.status = 'TRACKING_ASSUMED_ANCHOR'
 
@@ -138,6 +144,7 @@ class LocalPoseTracker:
 
     def _set_position_anchor(self, node, stamp, position, covariance, status):
         self.mean[:2] = position
+        self.anchor_xy = np.array(position, dtype=float)
         self.covariance[:2, :2] = covariance
         # A new assumed XY anchor does not measure or correct heading.
         self.covariance[:2, 2] = self.covariance[2, :2] = 0.
@@ -229,6 +236,38 @@ class LocalPoseTracker:
         self._set_position_anchor(closest_node, stamp, mean, covariance, 'RECOVERY_POSITION_RESET')
         self.recovery_count += 1
         return True
+
+    def apply_heading(self, node_idx, stamp_ns, epoch, pose_at_stamp, dpsi, std):
+        """Set the heading measured at stamp_ns: heading = recorded yaw of node_idx + dpsi.
+
+        pose_at_stamp is the tracker (x, y, yaw) when the measured image was taken. A
+        measurement can arrive late; motion integrated since then used the old heading,
+        so it is rotated by the same correction about the pose at stamp_ns, or about a
+        later XY anchor, from which motion was integrated afresh. Returns the applied
+        heading change in radians, or None when the tracker cannot take it.
+        """
+        if (self.mean is None or not self.continuous or epoch != self.epoch or
+                stamp_ns > self.last_odometry.stamp_ns or not all(
+                    math.isfinite(v) for v in (*pose_at_stamp, dpsi, std))):
+            return None
+        target = float(self.motion.node_yaw[node_idx]) + dpsi
+        delta = float(wrap(target - pose_at_stamp[2]))
+        pivot = (self.anchor_xy if self.anchor_stamp_ns is not None and self.anchor_stamp_ns > stamp_ns
+                 else np.asarray(pose_at_stamp[:2], dtype=float))
+        c, s = math.cos(delta), math.sin(delta)
+        rotation = np.array([[c, -s], [s, c]])
+        self.mean[:2] = pivot + rotation @ (self.mean[:2] - pivot)
+        self.mean[2] = wrap(self.mean[2] + delta)
+        jacobian = np.eye(3)
+        jacobian[:2, :2] = rotation
+        covariance = jacobian @ self.covariance @ jacobian.T
+        # The measurement replaces the heading belief; its error is independent of XY.
+        covariance[:2, 2] = covariance[2, :2] = 0.
+        covariance[2, 2] = std**2
+        self.covariance = (covariance + covariance.T) / 2
+        self.heading_count += 1
+        self.status = 'HEADING_MEASURED'
+        return delta
 
     def goal(self, node_idx):
         """Goal pose/covariance in the current body frame, conditional on anchor.
