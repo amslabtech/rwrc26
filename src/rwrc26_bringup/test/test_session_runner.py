@@ -114,6 +114,30 @@ PY
             with patch.object(sys, 'argv', ['navigate.py'] + argv + invalid), self.assertRaises(SystemExit):
                 parser.parse_args()
 
+    def test_wp_goal_pose_reaches_parser_and_requires_omnivla_with_local_pose(self):
+        directory = Path(os.environ.get('PLACENAV_TEST_SRC', Path(__file__).resolve().parents[2]))
+        spec = importlib.util.spec_from_file_location('selected_placenav_parser_goal_pose', directory/'placenav/parser.py')
+        parser = importlib.util.module_from_spec(spec); spec.loader.exec_module(parser)
+        base = dict(placenav_src=str(directory), topomap_dir='route', wp_model='omnivla_edge', img_size=[96, 96],
+                    motion_model='odometry', local_pose=True, subgoal_update='arrival')
+        required = ['--robot', 'whill', '--robot-config-path', 'robots.yaml',
+                    '--model-config-path', 'models.yaml', '--topomap-base-dir', 'maps',
+                    '--model-weight-dir', 'weights']
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled):
+                command, _ = runner.navigation_command(dict(base, wp_goal_pose=enabled))
+                self.assertEqual('--wp-goal-pose' in command, enabled)
+                with patch.object(sys, 'argv', ['navigate.py']+required+command[2:]):
+                    self.assertEqual(parser.parse_args().wp_goal_pose, enabled)
+        for invalid in ({'wp_model': 'nomad'}, {'local_pose': False}, {'wp_goal_pose': 'true'}):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                runner.navigation_command(dict(base, **dict({'wp_goal_pose': True}, **invalid)))
+        # The parser enforces the same rule for direct navigate.py / navigate_whill.sh use.
+        with patch.object(sys, 'argv', ['navigate.py']+required+['--topomap-dir', 'route', '--wp-model', 'nomad',
+                                                              '--local-pose', '--wp-goal-pose']), \
+                patch('sys.stderr'), self.assertRaises(SystemExit):
+            parser.parse_args()
+
     def test_invalid_motion_options_are_rejected(self):
         directory = self.root/'PlaceNav'; directory.mkdir(); (directory/'navigate_whill.sh').touch()
         for options in ({'motion_model': 'typo'}, {'odom_max_gap': 0},

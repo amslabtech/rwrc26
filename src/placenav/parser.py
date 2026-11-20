@@ -158,6 +158,10 @@ def parse_args():
                         help='Along-route process std in meters per sqrt(meter travelled)')
     parser.add_argument('--local-pose', action='store_true',
                         help='Publish diagnostic-only local 2D pose and relative image goal')
+    parser.add_argument('--wp-goal-pose', action='store_true',
+                        help='Experimental, OmniVLA-edge only: also feed the --local-pose relative '
+                             'subgoal pose (upstream modality 5, pose and image). Falls back to the '
+                             'image-only goal while the local pose is not valid')
     resets = parser.add_mutually_exclusive_group()
     resets.add_argument('--local-pose-reset', dest='local_pose_reset', action='store_true', default=True,
                         help='Enable local XY anchors at goal switches and recovery (default)')
@@ -231,6 +235,8 @@ def parse_args():
     args, _ = parser.parse_known_args()
     if args.local_pose and args.motion_model != 'odometry':
         parser.error('--local-pose requires --motion-model odometry')
+    if args.wp_goal_pose and (args.wp_model != 'omnivla_edge' or not args.local_pose):
+        parser.error('--wp-goal-pose requires --wp-model omnivla_edge and --local-pose')
     if args.goal_eval_yaw_tolerance > math.pi:
         parser.error('--goal-eval-yaw-tolerance must not exceed pi')
     if args.goal_eval_neighborhood_radius < args.goal_eval_position_tolerance:

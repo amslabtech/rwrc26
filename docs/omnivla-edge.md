@@ -51,10 +51,29 @@ cd src && ./navigate_whill.sh --topomap-dir ROUTE --wp-model omnivla_edge --pr-m
 照合手法の変更（SuperPoint＋LightGlue＋5点法）でも、今のところ傾向は同じ。
 正しい姿勢を入れれば明確に改善するので、姿勢の精度、特にtrackerの位置（ルートに対する左右）を上げられれば
 結果が変わる可能性がある（ルートに対する横位置の直接観測、誤差を含む姿勢での学習など）。
-navigate.pyへは接続していない。検証スクリプトはリポジトリ外（ローカル）。
+以下の数値はオフライン再生（記録したtracker出力をOmniVLA-edgeへ入力）によるもの。検証スクリプトはリポジトリ外（ローカル）。
 
 姿勢入力は上流の学習コード（`gnm_dataset.py`）と同じ`[x/0.1, y/0.1, cos Δyaw, sin Δyaw]`（x前方・y左・yaw反時計回り）。
 OmniVLA-edgeには姿勢の信頼度を渡す入力や調整パラメータはなく、modalityで使う／使わないを選ぶだけ。
+
+### 実機・bag再生で使う（実験用、既定は無効）
+
+```bash
+# bringup（parrot、Xavier分割でも同じ。session_runnerが--wp-goal-poseを付ける）
+roslaunch rwrc26_bringup navigation.launch wp_model:=omnivla_edge local_pose:=true wp_goal_pose:=true ...
+# 単独CLI
+./navigate_whill.sh --topomap-dir ROUTE --wp-model omnivla_edge --local-pose --wp-goal-pose ...
+```
+
+- `OmniVLAEdgeAdapter`に`goal_pose=(x, y, yaw)`を渡すとmodality 5（姿勢＋画像）で推論し、渡さなければ従来どおり
+  modality 6（画像のみ）。30 m超の距離は上流と同じく30 mに切り詰める。
+- navigate.pyは、`/toponav/local_goal_pose`と同じ`LocalPoseTracker.goal(subgoal)`を、初期化済み・odom連続・
+  その画像時刻で更新済みのときだけ渡す。それ以外（初期化前、odom不連続で追跡が無効になった後など）は画像のみに戻り、
+  切り替わりをログに出す（`OmniVLA-edge goal: subgoal image and local pose` / `... only`）。
+- `wp_model:=omnivla_edge`と`local_pose:=true`が必須（`session_runner.py`とparserが起動前に拒否する）。
+- 到達時の向きの補正（下記の「画像で補正」）は実装していない。tracker出力をそのまま入れるので、下表の
+  「画像＋tracker」に相当する（オフラインでは画像のみより悪化）。`tsukuba_lidar.bag`の0〜120 sの再生では、
+  経路長の中央値が0.67 m（画像のみ）から0.81 mに伸び、オフラインの傾向と一致した。
 
 ### 模擬誤差（同一走行のbag再生、744サンプル・旋回147）
 

@@ -1,4 +1,5 @@
 """Goal-conditioned ViNT / NoMaD / OmniVLA-edge adapters. No downloads during navigation."""
+import math
 from pathlib import Path
 import sys
 
@@ -77,30 +78,56 @@ class NoMaDAdapter(nn.Module):
 
 
 class OmniVLAEdgeAdapter(nn.Module):
-    """OmniVLA-edge conditioned on the goal image only (upstream modality id 6).
+    """OmniVLA-edge conditioned on the goal image (upstream modality id 6), optionally
+    together with the relative goal pose (modality 5, experimental).
 
     The unused pose / satellite-map / language inputs are masked inside the
-    network, so neutral zeros are exact stand-ins. This keeps the goal-image
-    interface shared with ViNT/NoMaD and needs neither CLIP nor GPS.
+    network, so neutral zeros are exact stand-ins. The image-only path keeps the
+    goal-image interface shared with ViNT/NoMaD and needs neither CLIP nor GPS.
     Actions are x-forward / y-left, [dx, dy, cos, sin], in units of 0.1 m.
     """
     IMAGE_ONLY = 6
+    POSE_AND_IMAGE = 5
     TEXT_DIM = 512
     LARGE_IMAGE_SIZE = 224
+    POSE_CLIP_M = 30.0  # upstream run_omnivla_edge.py thres_dist
 
     def __init__(self, model, config):
         super().__init__()
         self.model = model
         self.context_size = config["context_size"]
         self.horizon = config["len_traj_pred"]
+        self.metric_scale = float(config.get("metric_scale", 0.1))
 
-    def forward(self, observation, goal):
+    def pose_input(self, goal_pose, batch, device, dtype):
+        """(x forward, y left [m], yaw CCW [rad]) -> upstream [x/s, y/s, cos yaw, sin yaw].
+
+        Same convention as the upstream training data (gnm_dataset.py): position in
+        the action units, relative yaw as cos/sin; positions beyond 30 m are clipped
+        to 30 m like upstream run_omnivla_edge.py.
+        """
+        x, y, yaw = (float(v) for v in goal_pose)
+        if not all(math.isfinite(v) for v in (x, y, yaw)):
+            raise ValueError("goal pose must be finite")
+        r = math.hypot(x, y)
+        if r > self.POSE_CLIP_M:
+            x, y = x * self.POSE_CLIP_M / r, y * self.POSE_CLIP_M / r
+        row = torch.tensor([x / self.metric_scale, y / self.metric_scale, math.cos(yaw), math.sin(yaw)],
+                           device=device, dtype=dtype)
+        return row.expand(batch, 4)
+
+    def forward(self, observation, goal, goal_pose=None):
+        """goal_pose: None (image only) or (x forward, y left [m], yaw CCW [rad]) of the subgoal."""
         batch, device = observation.shape[0], observation.device
         size = observation.shape[-1]
         zeros = lambda *shape: torch.zeros(batch, *shape, device=device, dtype=observation.dtype)
-        modality = torch.full((batch,), self.IMAGE_ONLY, device=device, dtype=torch.long)
+        if goal_pose is None:
+            pose, mode = zeros(4), self.IMAGE_ONLY
+        else:
+            pose, mode = self.pose_input(goal_pose, batch, device, observation.dtype), self.POSE_AND_IMAGE
+        modality = torch.full((batch,), mode, device=device, dtype=torch.long)
         action, distance, _ = self.model(
-            observation, zeros(4), zeros(9, size, size), goal, modality,
+            observation, pose, zeros(9, size, size), goal, modality,
             zeros(self.TEXT_DIM), zeros(3, self.LARGE_IMAGE_SIZE, self.LARGE_IMAGE_SIZE))
         return distance, action
 

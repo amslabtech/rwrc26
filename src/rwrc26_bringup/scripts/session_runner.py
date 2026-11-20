@@ -69,6 +69,13 @@ def navigation_command(params):
         if motion != 'odometry':
             raise ValueError('local_pose requires odometry')
         command.append('--local-pose')
+    goal_pose = params.get('wp_goal_pose', False)
+    if not isinstance(goal_pose, bool):
+        raise ValueError('wp_goal_pose must be a YAML boolean')
+    if goal_pose:
+        if str(params.get('wp_model', 'nomad')) != 'omnivla_edge' or not params.get('local_pose', False):
+            raise ValueError('wp_goal_pose requires wp_model omnivla_edge and local_pose')
+        command.append('--wp-goal-pose')
     reset = params.get('local_pose_reset', True)
     if not isinstance(reset, bool):
         raise ValueError('local_pose_reset must be a YAML boolean')

@@ -10,6 +10,7 @@
   <arg name="odom_noise" default=""/>
   <arg name="local_pose" default="true"/>
   <arg name="local_pose_reset" default=""/>
+  <arg name="wp_goal_pose" default="false"/>
   <arg name="subgoal_update" default="arrival"/>
   <arg name="pass_threshold" default=""/>
   <arg name="pass_confirmations" default=""/>
@@ -46,6 +47,7 @@
     <arg name="odom_noise" value="$(arg odom_noise)"/>
     <arg name="local_pose" value="$(arg local_pose)"/>
     <arg name="local_pose_reset" value="$(arg local_pose_reset)"/>
+    <arg name="wp_goal_pose" value="$(arg wp_goal_pose)"/>
     <arg name="subgoal_update" value="$(arg subgoal_update)"/>
     <arg name="pass_threshold" value="$(arg pass_threshold)"/>
     <arg name="pass_confirmations" value="$(arg pass_confirmations)"/>

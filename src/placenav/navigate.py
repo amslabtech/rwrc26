@@ -44,6 +44,8 @@ class PlaceNavNode:
         ):
         self.motion_model = args.motion_model
         self.local_pose_enabled = args.local_pose
+        self.wp_goal_pose = getattr(args, 'wp_goal_pose', False)
+        self._wp_goal_mode = None
         if self.motion_model == 'odometry' and not (
                 args.topomap_base_dir / args.topomap_dir / 'node_odometry.json').is_file():
             raise FileNotFoundError('Odometry motion requires node_odometry.json; '
@@ -409,6 +411,24 @@ class PlaceNavNode:
             self._last_odom_epoch = epoch
         return sample
 
+    def _waypoint_goal_pose(self, subgoal_idx, odometry):
+        """Relative subgoal pose for OmniVLA-edge (--wp-goal-pose), or None for the image-only goal.
+
+        Uses the same LocalPoseTracker estimate as /toponav/local_goal_pose, only while it
+        is initialised, odometry-continuous and updated at this image's odometry stamp.
+        """
+        tracker = getattr(self, 'local_pose_tracker', None)
+        usable = (tracker is not None and tracker.mean is not None and tracker.continuous and
+                  odometry is not None and tracker.last_odometry is not None and
+                  tracker.last_odometry.stamp_ns == odometry.stamp_ns)
+        mode = 'subgoal image and local pose' if usable else 'subgoal image only'
+        previous = getattr(self, '_wp_goal_mode', None)
+        if mode != previous:
+            log = rospy.loginfo if usable or previous is None else rospy.logwarn
+            log('OmniVLA-edge goal: %s', mode)
+            self._wp_goal_mode = mode
+        return tracker.goal(subgoal_idx)[0] if usable else None
+
     def stop_callback(self, msg: Bool):
         if msg.data and not self._terminal_stop_sent:
             rospy.loginfo("Stopping...")
@@ -573,8 +593,13 @@ class PlaceNavNode:
                     if reached_goal:
                         waypoints = np.empty((0, 2))
                     else:
+                        goal_pose = (self._waypoint_goal_pose(subgoal_idx, odometry)
+                                     if getattr(self, 'wp_goal_pose', False) else None)
                         with torch.no_grad():
-                            _, waypoints = self.waypoint_model(context, sg_img)
+                            if goal_pose is None:
+                                _, waypoints = self.waypoint_model(context, sg_img)
+                            else:
+                                _, waypoints = self.waypoint_model(context, sg_img, goal_pose=goal_pose)
                         waypoints = to_numpy(waypoints[0])
 
                 elif args.subgoal_mode == 'temporal_distance':

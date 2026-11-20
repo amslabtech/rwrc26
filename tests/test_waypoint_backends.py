@@ -1,3 +1,4 @@
+import math
 import sys
 import unittest
 from pathlib import Path
@@ -58,6 +59,31 @@ class WaypointTests(unittest.TestCase):
 WEIGHTS = ROOT / "src/model_weights/waypoint/omnivla_edge.pth"
 
 
+class OmniVLAEdgePoseInputTests(unittest.TestCase):
+    """Goal-pose conversion only; the network is not needed."""
+
+    def setUp(self):
+        from placenav.waypoint_backends import OmniVLAEdgeAdapter
+        with (ROOT / "src/config/models.yaml").open() as f:
+            conf = yaml.safe_load(f)["omnivla_edge"]
+        self.adapter = OmniVLAEdgeAdapter(None, conf)
+
+    def test_upstream_units_heading_and_batch(self):
+        pose = self.adapter.pose_input((2.0, -0.5, math.pi / 2), 3, "cpu", torch.float32)
+        self.assertEqual(pose.shape, (3, 4))
+        torch.testing.assert_close(pose[0], torch.tensor([20.0, -5.0, 0.0, 1.0]), atol=1e-6, rtol=0)
+        torch.testing.assert_close(pose[2], pose[0])
+
+    def test_distance_clipped_like_upstream(self):
+        far = self.adapter.pose_input((60.0, 80.0, 0.0), 1, "cpu", torch.float32)
+        torch.testing.assert_close(far[0, :2], torch.tensor([180.0, 240.0]))  # 30 m along (0.6, 0.8)
+
+    def test_non_finite_pose_rejected(self):
+        for pose in ((float("nan"), 0.0, 0.0), (1.0, float("inf"), 0.0), (1.0, 0.0, float("nan"))):
+            with self.subTest(pose=pose), self.assertRaises(ValueError):
+                self.adapter.pose_input(pose, 1, "cpu", torch.float32)
+
+
 # Real weights are required: a randomly initialised network ends in ReLU and
 # outputs a constant, which would make every sensitivity check below vacuous.
 @unittest.skipUnless(HAS_OMNIVLA and WEIGHTS.is_file() and torch.cuda.is_available(),
@@ -98,6 +124,19 @@ class OmniVLAEdgeTests(unittest.TestCase):
         zero = self.raw(4, torch.zeros(2, 4).cuda(), torch.zeros(2, 512).cuda())
         moved = self.raw(4, torch.randn(2, 4).cuda() * 20, torch.zeros(2, 512).cuda())
         self.assertFalse(torch.allclose(zero, moved), "control failed: pose mode ignores the pose")
+
+    def test_goal_pose_runs_pose_and_image_mode(self):
+        """adapter(..., goal_pose) == upstream modality 5 with the converted pose."""
+        goal_pose = (2.5, 0.8, 0.3)
+        with torch.no_grad():
+            _, action = self.adapter(self.obs, self.goal, goal_pose=goal_pose)
+        expected = torch.tensor([[25.0, 8.0, math.cos(0.3), math.sin(0.3)]] * 2, device="cuda")
+        torch.testing.assert_close(action, self.raw(5, expected, torch.zeros(2, 512).cuda()))
+        with torch.no_grad():
+            _, image_only = self.adapter(self.obs, self.goal)
+            _, moved = self.adapter(self.obs, self.goal, goal_pose=(2.5, -2.0, -0.6))
+        self.assertFalse(torch.allclose(action, image_only), "pose mode must differ from image only")
+        self.assertFalse(torch.allclose(action, moved), "pose mode must react to the pose")
 
 
 if __name__ == "__main__":

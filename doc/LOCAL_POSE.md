@@ -13,7 +13,9 @@ VPR・1D belief・サブゴール更新・速度指令へこの推定を戻す�
 向きはリセットせず、odomによる追跡を継続する。
 `arrival` / `passage`のリカバリー確定時には、局所位置とbeliefが大きく矛盾する場合だけ
 XY基準を補正する。条件と制限は後述。
-OmniVLA向け制御接続、不連続後の自動再局在はまだ実装していない。
+不連続後の自動再局在はまだ実装していない。OmniVLA-edgeへは、実験用の`wp_goal_pose:=true`（CLIは`--wp-goal-pose`）
+のときだけ同じ相対ゴール姿勢を入力する（既定は無効。`/toponav/local_goal_pose`自体は診断出力のまま）。
+評価は`docs/omnivla-edge.md`。
 
 ## 起動
 
