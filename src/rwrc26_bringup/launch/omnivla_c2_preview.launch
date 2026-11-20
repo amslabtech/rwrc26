@@ -1,0 +1,26 @@
+<launch>
+  <!-- Inference and pre-TEB Path only. Supply C2 RGB, odometry and TF externally. -->
+  <arg name="topomap_dir"/>
+  <arg name="placenav_src" default="/home/user/ws/src/PlaceNav/src"/>
+  <arg name="remote_navigation" default="false"/>
+  <arg name="subgoal_update" default="nearest"/>
+  <arg name="use_sim_time" default="false"/>
+  <arg name="compressed_input" default="false"/>
+  <param name="use_sim_time" value="$(arg use_sim_time)"/>
+  <node if="$(arg compressed_input)" pkg="image_transport" type="republish"
+        name="c2_preview_decompress" args="compressed in:=/usb_cam/image_raw raw out:=/usb_cam/image_raw"/>
+  <node pkg="rwrc26_bringup" type="session_runner.py" name="placenav_runner"
+        required="true" clear_params="true" output="screen">
+    <rosparam command="load" file="$(find rwrc26_bringup)/config/placenav.yaml"/>
+    <env name="OPENBLAS_NUM_THREADS" value="1"/>
+    <env name="PYTHONPATH" value="$(arg placenav_src):$(optenv PYTHONPATH)"/>
+    <param name="placenav_src" value="$(arg placenav_src)"/>
+    <param name="topomap_dir" value="$(arg topomap_dir)"/>
+    <param name="pr_model" value="cosplace"/>
+    <param name="wp_model" value="omnivla_edge"/>
+    <param name="motion_model" value="odometry"/>
+    <param name="subgoal_update" value="$(arg subgoal_update)"/>
+    <param name="remote_navigation" value="$(arg remote_navigation)"/>
+    <param name="visualization" value="false"/>
+  </node>
+</launch>

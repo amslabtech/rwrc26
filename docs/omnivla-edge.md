@@ -174,3 +174,61 @@ roslaunch rwrc26_bringup navigation.launch wp_model:=omnivla_edge local_pose:=tr
 - 障害物回避・衝突は評価していない。TEB＋STVLは外さない。
 - 短い参照経路がTEBに与える影響。必要なら`metric_scale`の調整（現在は上流の0.1に固定）や`--target-waypoint-idx`（上流は4）を試す。
 - 学習データに車いす型の機体は含まれない（FrodoBots・車載映像など）。WHILLのカメラ高さ・画角との差は未評価。
+
+## C2単独で回避経路を見る（WHILL・速度指令なし）
+
+### 11/19の記録と同じサブゴールで再推論
+
+ROS Noetic・CUDAを使えるPlaceNavコンテナで、リポジトリ直下から実行する。
+
+```bash
+source /opt/ros/noetic/setup.bash
+python3 src/prepare_waypoint.py --models omnivla_edge  # 重みを配置済みなら省略可
+python3 src/preview_omnivla_bag.py \
+    bag/1119/omnivla_edge_odometry_nearest_2026-11-19-07-42-51.bag \
+    --topomap src/topomaps/images/whill_odometry_ikuta_3.5 \
+    --start 760 --duration 10 --output /tmp/c2-person.mp4
+```
+
+C2の記録画像と撮影時刻が一致する `/toponav/viz_info` からサブゴールIDを取り出す。
+モデル入力はC2の連続6画像と該当ノードの画像。VPRの再推定、D435、TEB、ROS masterは不要。
+左が撮影画像、右が前方を上・左方を左とする機体座標の経路（緑＝再推論、青＝bag記録）。
+動画は照合できた推論1件につき1フレーム、固定5 fps。画面の時刻はbag先頭からの撮影時刻。
+圧縮画像と記録された履歴を使うため、実験当時の入力と完全には一致しない場合がある。
+同じ地図・モデルのbagを指定する。記録経路にはモデル名が含まれない。
+比較できるのは画像を見た時点の予測であり、実機がその経路で避け切れるかは別途評価する。
+
+### VPRから経路生成まで再実行
+
+`rwrc26_bringup` をビルドしてワークスペースをsourceした環境で、走行系から独立した
+ROS masterを使う。以下は11/19屋外の `odometry / nearest` 条件。各端末で同じ
+`ROS_MASTER_URI` を指定する。作業コピーを切り替えた後は、コンテナ内で次の2パッケージをビルドする。
+
+```bash
+cd /home/user/ws
+source /opt/ros/noetic/setup.bash
+colcon build --base-paths src/PlaceNav/src/placenav_viz_msgs/src/placenav_viz_msgs src/PlaceNav/src/rwrc26_bringup \
+    --packages-select placenav_viz_msgs rwrc26_bringup --symlink-install
+source install/setup.bash
+cd src/PlaceNav
+```
+
+```bash
+# 端末1
+export ROS_MASTER_URI=http://localhost:11329
+roscore -p 11329
+
+# 端末2
+export ROS_MASTER_URI=http://localhost:11329
+roslaunch rwrc26_bringup omnivla_c2_preview.launch \
+    topomap_dir:=whill_odometry_ikuta_3.5 use_sim_time:=true compressed_input:=true
+
+# 端末3（C2・自己位置推定に使うodom・座標変換のみを入力）
+export ROS_MASTER_URI=http://localhost:11329
+rosbag play --clock bag/1119/omnivla_edge_odometry_nearest_2026-11-19-07-42-51.bag \
+    --topics /usb_cam/image_raw/compressed /odom /tf /tf_static
+```
+
+RVizでは Fixed Frame を `odom`、Path を `/placenav/gnm_path` にする。
+このlaunchはCosPlaceとOmniVLA-edgeを使い、TEB、PD、深度ノード、車体ドライバーを起動しない。
+実カメラのraw画像を使うときは `use_sim_time` と `compressed_input` を省略する。
