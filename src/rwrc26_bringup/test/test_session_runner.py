@@ -289,6 +289,51 @@ Path('adapter.json').write_text(json.dumps(sys.argv[1:]))
         with self.assertRaises(ValueError):  # parrot launch without remote_navigation:=true
             runner.xavier_navigation_command(dict(params, remote_navigation=False), str(xavier))
 
+    def test_remote_waypoint_role_runs_localization_here_and_waypoints_on_xavier(self):
+        directory = Path(os.environ.get('PLACENAV_TEST_SRC', Path(__file__).resolve().parents[2]))
+        spec = importlib.util.spec_from_file_location('split_placenav_parser', directory/'placenav/parser.py')
+        parser = importlib.util.module_from_spec(spec); spec.loader.exec_module(parser)
+        params = dict(placenav_src=str(directory), topomap_dir='route', wp_model='omnivla_edge',
+                      pr_model='salad', remote_navigation=True, remote_role='waypoint',
+                      subgoal_command_timeout=.4, motion_model='odometry', local_pose=True,
+                      wp_goal_pose=True, heading_correction='sift_shift', subgoal_update='arrival')
+        parrot, _ = runner.navigation_command(params)
+        xavier, _ = runner.xavier_navigation_command(params, str(directory))
+        # parrot keeps navigate.py (localization), the path adapter and the GUI.
+        self.assertNotIn('--remote-navigation', parrot)
+        self.assertNotIn('--no-path-adapter', parrot)
+        self.assertNotIn('--no-visualization', parrot)
+        self.assertEqual(parrot[parrot.index('--nav-role')+1], 'localization')
+        self.assertIn('--no-path-adapter', xavier)
+        self.assertIn('--no-visualization', xavier)
+        # Everything that selects the route, models and indices is identical on both machines.
+        strip = {'--no-path-adapter', '--no-visualization', '--subgoal-command-timeout', '0.4',
+                 '--nav-role', 'localization', 'waypoint'}
+        self.assertEqual([a for a in parrot[2:] if a not in strip], [a for a in xavier[2:] if a not in strip])
+        required = ['--robot', 'whill', '--robot-config-path', '/unused/robots.yaml',
+                    '--model-config-path', '/unused/models.yaml',
+                    '--model-weight-dir', '/unused/weights', '--topomap-base-dir', '/unused/maps']
+        for command, role in ((parrot, 'localization'), (xavier, 'waypoint')):
+            with patch.object(sys, 'argv', ['navigate.py']+required+command[2:]):
+                args = parser.parse_args()
+            self.assertEqual(args.nav_role, role)
+            self.assertTrue(args.wp_goal_pose)
+            self.assertEqual(args.heading_correction, 'sift_shift')
+            self.assertEqual(args.pr_model, 'salad')
+        self.assertAlmostEqual(args.subgoal_command_timeout, .4)
+
+    def test_remote_role_is_validated(self):
+        directory = self.root/'PlaceNav'; directory.mkdir(); (directory/'navigate_whill.sh').touch()
+        params = dict(placenav_src=str(directory), topomap_dir='route', remote_navigation=True)
+        for bad in (dict(remote_role='vpr'), dict(remote_navigation='true'),
+                    dict(remote_role='waypoint', subgoal_command_timeout=0.)):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                runner.xavier_navigation_command(dict(params, **bad), str(directory))
+        # Without remote_navigation the role is ignored: everything runs on parrot.
+        local, _ = runner.navigation_command(dict(params, remote_navigation=False, remote_role='waypoint'))
+        self.assertNotIn('--nav-role', local)
+        self.assertNotIn('--remote-navigation', local)
+
     def test_remote_odometry_options_reach_xavier_parser(self):
         directory = Path(os.environ.get('PLACENAV_TEST_SRC', Path(__file__).resolve().parents[2]))
         spec = importlib.util.spec_from_file_location('remote_placenav_parser', directory/'placenav/parser.py')

@@ -46,6 +46,7 @@ class NavigateFrameGateTest(unittest.TestCase):
         node.goal_evaluation_config = GoalEvaluationConfig()
         node.robot_config = dict(frame_rate=5, max_v=1.)
         node.odometry_topic = "/test/odom"
+        node._odom_child_frame = "base_link"
         node.odom_history = OdometryHistory(.2, max_speed=3.)
         node.obs_lock, node.odom_lock = Lock(), Lock()
         node.odom_condition = Condition(node.odom_lock)
@@ -369,6 +370,137 @@ class NavigateFrameGateTest(unittest.TestCase):
         before = node.waypoint_pub.publish.call_count
         node.publish_terminal_stop()
         self.assertEqual(node.waypoint_pub.publish.call_count, before)
+
+    def test_localization_role_publishes_subgoal_commands_instead_of_waypoints(self):
+        node = self.make_node()
+        node.nav_role, node.wp_goal_pose, node._wp_goal_mode = "localization", True, None
+        node._odom_child_frame = "base_link"
+        node.subgoal_command_pub = Mock()
+        stamps = [10_050_000_000, 10_150_000_000, 10_250_000_000]
+
+        def frame(i):
+            def action():
+                self.add_odom(node, 10_000_000_000 + 100_000_000 * i, .02 * i)
+                self.add_odom(node, 10_100_000_000 + 100_000_000 * i, .02 * (i + 1))
+                self.image(node, stamps[i])
+            return action
+
+        self.run_navigation(node, [frame(i) for i in range(3)])
+        node.waypoint_model.assert_not_called()
+        node.waypoint_pub.publish.assert_not_called()
+        node.viz_pub.publish.assert_not_called()  # the waypoint node publishes the path input
+        commands = [c.args[0] for c in node.subgoal_command_pub.publish.call_args_list]
+        self.assertEqual([c.header.stamp.to_nsec() for c in commands], stamps)
+        self.assertEqual([c.header.frame_id for c in commands], ["base_link"] * 3)
+        local = [c.args[0] for c in node.local_pose_pub.publish.call_args_list]
+        for command, pose in zip(commands, local):
+            self.assertEqual(command.subgoal_idx, pose.subgoal_idx)
+            self.assertFalse(command.reached_goal)
+            self.assertTrue(command.goal_pose_valid)
+            # The command carries the same tracker goal as /toponav/local_goal_pose.
+            self.assertAlmostEqual(command.goal_x, pose.goal_pose.pose.position.x)
+            self.assertAlmostEqual(command.goal_y, pose.goal_pose.pose.position.y)
+
+    def make_waypoint_node(self):
+        node = self.make_node()
+        node.nav_role, node.wp_goal_pose, node._wp_goal_mode = "waypoint", True, None
+        node.subgoal_command = None
+        node.local_pose_enabled = False
+        del node.place_recognition_querier  # no VPR on the waypoint machine
+        goals = []
+
+        def infer(context, goal, goal_pose=None):
+            goals.append(goal_pose)
+            return torch.ones(1, 1), torch.tensor([[[10., 5., 1., 0.]] * 8])
+        node.waypoint_model = Mock(side_effect=infer)
+        return node, goals
+
+    @staticmethod
+    def command(node, stamp_ns, subgoal=1, reached=False, pose=(1., 0., 0.)):
+        from placenav_viz_msgs.msg import SubgoalCommand
+        message = SubgoalCommand()
+        message.header.stamp = rospy.Time(*divmod(stamp_ns, 10**9))
+        message.subgoal_idx, message.reached_goal = subgoal, reached
+        if pose is not None:
+            message.goal_pose_valid = True
+            message.goal_x, message.goal_y, message.goal_yaw = pose
+        node.subgoal_command_callback(message)
+
+    def run_waypoints(self, node, actions, timeout="0.6"):
+        args = self.navigation_args()
+        args.subgoal_command_timeout = float(timeout)
+        shutdown = [False]
+        pending = iter(actions)
+        gate = FrameGate(5, min_period_fraction=0, is_shutdown=lambda: shutdown[0])
+
+        def next_frame():
+            action = next(pending, None)
+            if action is None:
+                shutdown[0] = True
+                gate.notify()
+            else:
+                action()
+            gate.sleep()
+
+        node.frame_gate = SimpleNamespace(notify=gate.notify, sleep=next_frame)
+        with patch.object(rospy, "is_shutdown", side_effect=lambda: shutdown[0]), \
+                patch.object(rospy, "loginfo"), patch.object(rospy, "logwarn"), \
+                patch.object(rospy, "logwarn_throttle") as warn:
+            node.navigate_waypoints(args)
+        return [c.args[1] % c.args[2:] for c in warn.call_args_list]  # (period, format, *args)
+
+    def test_waypoint_role_moves_the_commanded_goal_to_its_own_frame(self):
+        node, goals = self.make_waypoint_node()
+
+        def fresh():
+            self.add_odom(node, 10_000_000_000, 0.)
+            self.add_odom(node, 10_200_000_000, .2)
+            self.command(node, 10_000_000_000, subgoal=2, pose=(1., .1, 0.))
+            self.image(node, 10_100_000_000)  # 0.1 m further than the command's image
+
+        def image_only():
+            self.command(node, 10_100_000_000, subgoal=2, pose=None)
+            self.image(node, 10_150_000_000)
+
+        warnings = self.run_waypoints(node, [fresh, image_only])
+        self.assertEqual(warnings, [])
+        np.testing.assert_allclose(goals[0], (.9, .1, 0.), atol=1e-9)
+        self.assertIsNone(goals[1])
+        self.assertEqual([c.args[0].subgoal_idx for c in node.viz_pub.publish.call_args_list], [2, 2])
+        self.assertEqual([c.args[0].query_timestamp.to_nsec() for c in node.viz_pub.publish.call_args_list],
+                         [10_100_000_000, 10_150_000_000])
+        np.testing.assert_allclose(node.waypoint_pub.publish.call_args_list[0].args[0].data, [1., .5, 1., 0.])
+
+    def test_waypoint_role_publishes_nothing_without_a_fresh_command(self):
+        node, goals = self.make_waypoint_node()
+        node.wp_goal_pose = False
+        actions = [lambda: self.image(node, 10_000_000_000),            # no command yet
+                   lambda: (self.command(node, 10_100_000_000),
+                            self.image(node, 10_800_000_000)),           # 0.7 s old
+                   lambda: (self.command(node, 10_800_000_000, subgoal=3),
+                            self.image(node, 10_900_000_000))]           # outside the 3-node map
+        warnings = self.run_waypoints(node, actions)
+        node.waypoint_model.assert_not_called()
+        node.waypoint_pub.publish.assert_not_called()
+        self.assertEqual(len(warnings), 3)
+        self.assertIn("no subgoal command", warnings[0])
+        self.assertIn("0.70 s older than the previous camera frame", warnings[1])
+        self.assertIn("outside the topomap", warnings[2])
+
+    def test_waypoint_role_stops_on_the_final_command_without_ending_the_session(self):
+        node, goals = self.make_waypoint_node()
+        node.wp_goal_pose = False
+        actions = [lambda: (self.command(node, 10_000_000_000), self.image(node, 10_000_000_000)),
+                   lambda: self.command(node, 10_100_000_000, reached=True),
+                   lambda: self.fail("still running after the final command")]
+        self.run_waypoints(node, actions)
+        self.assertTrue(node._goal_reached and node._terminal_stop_sent)
+        self.assertEqual(node.waypoint_model.call_count, 1)
+        for call in node.waypoint_pub.publish.call_args_list[-3:]:
+            np.testing.assert_array_equal(call.args[0].data, [0., 0.])
+        # Goal and stop events belong to the localization node.
+        node.goal_pub.publish.assert_not_called()
+        node.stop_pub.publish.assert_not_called()
 
 
 if __name__ == "__main__":

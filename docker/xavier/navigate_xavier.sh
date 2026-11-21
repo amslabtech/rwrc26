@@ -2,6 +2,7 @@
 # [Xavier] Run navigate.py for the navigation.launch that parrot started with
 # remote_navigation:=true. Route, models and indices are read from parrot's
 # /placenav_runner parameters, so nothing is repeated here. Stops when that launch ends.
+# With remote_role:=waypoint on parrot, only the waypoint model runs here (--nav-role waypoint).
 #
 #   parrot:  roslaunch rwrc26_bringup navigation.launch remote_navigation:=true path_timeout:=1.0 \
 #                wp_model:=omnivla_edge pr_model:=cosplace topomap_dir:=<route> ...

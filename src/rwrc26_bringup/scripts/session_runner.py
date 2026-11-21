@@ -10,6 +10,8 @@ cleanup can be tested without ROS, model loading, a camera, or robot command pub
 On the Xavier (split inference), `session_runner.py --xavier` reads the parameters that
 navigation.launch put under /placenav_runner on parrot and starts navigate.py with the
 same command line, so both machines can never disagree on route, models or indices.
+remote_role selects what runs there: 'all' (navigate.py; parrot runs only the path adapter)
+or 'waypoint' (only the waypoint model; parrot runs localization, the path adapter and the GUI).
 """
 import ast
 import math
@@ -141,19 +143,41 @@ def navigation_command(params):
         command.append('--no-visualization')
     if params.get('diagnostics', False) and supports_navigation_trace(directory):
         command.append('--trace-navigation')
-    if params.get('remote_navigation', False):
+    role = remote_role(params)
+    if role == 'waypoint':
+        # parrot: VPR, filter, local pose, heading correction; the Xavier only predicts waypoints
+        command += ['--nav-role', 'localization']
+    elif role == 'all':
         command.append('--remote-navigation')  # parrot: path adapter only
     # navigate_whill.sh starts the GNM path adapter itself. Do not duplicate it.
     return command, directory
 
 
+def remote_role(params):
+    """None (all on this machine), 'all' or 'waypoint': what navigate.py runs on the Xavier."""
+    remote = params.get('remote_navigation', False)
+    if not isinstance(remote, bool):
+        raise ValueError('remote_navigation must be a YAML boolean')
+    role = str(params.get('remote_role', 'all'))
+    if role not in ('all', 'waypoint'):
+        raise ValueError('remote_role must be all or waypoint')
+    return role if remote else None
+
+
 def xavier_navigation_command(params, placenav_src):
     """navigate.py alone, with parrot's launch parameters, from this machine's checkout."""
-    if not params.get('remote_navigation', False):
+    role = remote_role(params)
+    if role is None:
         raise ValueError('navigation.launch on parrot was not started with remote_navigation:=true')
     local = dict(params, placenav_src=placenav_src, remote_navigation=False, visualization=False)
     command, directory = navigation_command(local)
-    return command+['--no-path-adapter'], directory
+    command.append('--no-path-adapter')
+    if role == 'waypoint':
+        timeout = float(params.get('subgoal_command_timeout', .6))
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError('subgoal_command_timeout must be positive')
+        command += ['--nav-role', 'waypoint', '--subgoal-command-timeout', str(timeout)]
+    return command, directory
 
 
 def stop_process(process):

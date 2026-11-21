@@ -3,6 +3,7 @@ import torch
 import yaml
 import copy
 import argparse
+import json
 import math
 import time
 from collections import OrderedDict
@@ -36,6 +37,8 @@ from frame_gate import FrameGate
 # Visualization
 from placenav_viz_msgs.msg import Viz, LocalizationDiagnostics, GoalEvaluation
 
+SUBGOAL_COMMAND_TOPIC = '/toponav/subgoal_command'  # --nav-role localization -> waypoint
+
 class PlaceNavNode:
 
     img_suffix = ['png', 'jpg', 'jpeg']
@@ -45,13 +48,21 @@ class PlaceNavNode:
             args: argparse.Namespace,
         ):
         self.motion_model = args.motion_model
-        self.local_pose_enabled = args.local_pose
+        # full: one process. localization / waypoint: the two halves on two machines.
+        self.nav_role = getattr(args, 'nav_role', 'full')
+        self.local_pose_enabled = args.local_pose and self.nav_role != 'waypoint'
         self.wp_goal_pose = getattr(args, 'wp_goal_pose', False)
         self._wp_goal_mode = None
         if self.motion_model == 'odometry' and not (
                 args.topomap_base_dir / args.topomap_dir / 'node_odometry.json').is_file():
             raise FileNotFoundError('Odometry motion requires node_odometry.json; '
                                     'use an odometry map or --motion-model legacy')
+        self._odom_child_frame = None
+        if self.motion_model == 'odometry':
+            # Same body frame check as the VPR motion model, also without VPR (--nav-role waypoint).
+            odometry_path = args.topomap_base_dir / args.topomap_dir / 'node_odometry.json'
+            self._odom_child_frame = json.loads(
+                odometry_path.read_text(encoding='utf-8')).get('child_frame_id')
         self.odom_max_gap = args.odom_max_gap
         self.goal_evaluation_config = GoalEvaluationConfig(
             args.goal_eval_position_tolerance, args.goal_eval_yaw_tolerance,
@@ -89,7 +100,7 @@ class PlaceNavNode:
         self.odometry_topic = args.odom_topic or self.robot_config['odom_topic']
 
         # Initialize place recognition
-        if args.subgoal_mode == 'place_recognition':
+        if args.subgoal_mode == 'place_recognition' and self.nav_role != 'waypoint':
             self._setup_place_recognition(
                 args.model_config_path,
                 args.model_weight_dir,
@@ -109,16 +120,17 @@ class PlaceNavNode:
             args.model_weight_dir,
             args.wp_model,
             args.img_size,
+            load=self.nav_role != 'localization',
             )
 
         self.heading_corrector = None
         self._raw_frames = OrderedDict()
-        if getattr(args, 'heading_correction', 'none') != 'none':
+        if getattr(args, 'heading_correction', 'none') != 'none' and self.nav_role != 'waypoint':
             self._setup_heading_correction(args)
 
         self._setup_ros()
 
-        if args.subgoal_mode == 'place_recognition':
+        if hasattr(self, '_place_recognition_ready_path'):
             ready_tmp_path = self._place_recognition_ready_path.with_suffix(
                 self._place_recognition_ready_path.suffix + ".tmp"
             )
@@ -241,7 +253,9 @@ class PlaceNavNode:
             model_weight_dir: Path,
             model: str,
             img_size: Tuple[int, int],
+            load: bool = True,
             ):
+        """Load the waypoint model; with load=False (--nav-role localization) only its context size."""
         # Load waypoint model config
         with model_config_path.open(mode="r", encoding="utf-8") as f:
             model_configs = yaml.safe_load(f)
@@ -258,6 +272,14 @@ class PlaceNavNode:
         rospy.loginfo("Waypoint backend=%s, image=%s, points=%d, XY scale=%g",
                       model, img_size, model_config["len_traj_pred"], self.waypoint_scale)
 
+        # Initialize the context queue
+        self.context_size = model_config["context_size"]
+        self.context_queue: List[Dict[Time, torch.Tensor]] = []
+        if not load:
+            self.waypoint_model = None
+            rospy.loginfo("Waypoint model not loaded: waypoints come from --nav-role waypoint")
+            return
+
         model_path = model_weight_dir / model_config["checkpoint_path"]
         if not model_path.exists():
             raise FileNotFoundError(f"Model weights not found at {model_path}")
@@ -269,10 +291,6 @@ class PlaceNavNode:
             self.device)
         waypoint_model.eval()
         self.waypoint_model = waypoint_model
-
-        # Initialize the context queue
-        self.context_size = model_config["context_size"]
-        self.context_queue: List[Dict[Time, torch.Tensor]] = []
 
     def _setup_heading_correction(self, args):
         """Measure the heading at subgoal switches with the selected estimator (off-thread)."""
@@ -333,7 +351,9 @@ class PlaceNavNode:
             self.odom_max_gap, max_speed=max(3., 3 * self.robot_config['max_v']))
         self._last_localization_stamp = None
         self._last_odom_epoch = None
-        if self.motion_model == 'odometry':
+        self.subgoal_command = None
+        # The waypoint node needs odometry only to move the commanded goal pose to its frames.
+        if self.motion_model == 'odometry' and (self.nav_role != 'waypoint' or self.wp_goal_pose):
             self.odom_sub = rospy.Subscriber(
                 self.odometry_topic, Odometry, self.odom_callback, queue_size=100)
         # Inference starts when a frame arrives (no 0-200 ms wait for a free-running timer).
@@ -385,8 +405,19 @@ class PlaceNavNode:
         if self.local_pose_enabled:
             from placenav_viz_msgs.msg import LocalGoalPose
             self.local_pose_pub = rospy.Publisher('/toponav/local_goal_pose', LocalGoalPose, queue_size=1)
+        if self.nav_role == 'localization':
+            from placenav_viz_msgs.msg import SubgoalCommand
+            # Latched: a restarted waypoint node gets the last command (and a final reached_goal).
+            self.subgoal_command_pub = rospy.Publisher(
+                SUBGOAL_COMMAND_TOPIC, SubgoalCommand, queue_size=1, latch=True)
+        elif self.nav_role == 'waypoint':
+            from placenav_viz_msgs.msg import SubgoalCommand
+            self.subgoal_command_sub = rospy.Subscriber(
+                SUBGOAL_COMMAND_TOPIC, SubgoalCommand, self.subgoal_command_callback, queue_size=1)
 
-        rospy.init_node("PlaceNavNode", anonymous=False)
+        # Both halves of a split run on one ROS master; the GUI waits for /PlaceNavNode.
+        rospy.init_node("PlaceNavWaypointNode" if self.nav_role == 'waypoint' else "PlaceNavNode",
+                        anonymous=False)
         rospy.on_shutdown(self.publish_terminal_stop)
         rospy.loginfo('Localization motion model=%s, odometry=%s',
                       self.motion_model, self.odometry_topic)
@@ -418,7 +449,7 @@ class PlaceNavNode:
         if self._terminal_stop_sent:
             return
         q = msg.pose.pose.orientation
-        expected = self.place_recognition_querier.motion.child_frame_id
+        expected = self._odom_child_frame
         if (msg.child_frame_id != expected or
                 not np.isfinite([q.x, q.y, q.z, q.w]).all() or
                 q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w < 1e-12):
@@ -461,7 +492,9 @@ class PlaceNavNode:
             else:
                 return None
         if sample is not None and epoch != self._last_odom_epoch:
-            self.place_recognition_querier.reset_odometry()
+            querier = getattr(self, 'place_recognition_querier', None)
+            if querier is not None:
+                querier.reset_odometry()
             if self.local_pose_tracker is not None and self.local_pose_tracker.mean is not None:
                 self.local_pose_tracker.invalidate('ODOMETRY_DISCONTINUITY')
             if self.goal_selector is not None:
@@ -497,11 +530,124 @@ class PlaceNavNode:
         if self._terminal_stop_sent:
             return
         self._terminal_stop_sent = True
+        if getattr(self, 'nav_role', 'full') == 'waypoint':
+            # Goal and stop events belong to the localization node; a restarted waypoint
+            # node must not end the session there.
+            for _ in range(3):
+                self.waypoint_pub.publish(Float32MultiArray(data=[0., 0.]))
+                time.sleep(.05)
+            return
         publisher = self.goal_pub if self._goal_reached else self.stop_pub
         for _ in range(3):
             self.waypoint_pub.publish(Float32MultiArray(data=[0., 0.]))
             publisher.publish(Bool(data=True))
             time.sleep(.05)
+
+    def _publish_subgoal_command(self, stamp, current_node_idx, subgoal_idx, reached_goal, goal_pose):
+        from placenav_viz_msgs.msg import SubgoalCommand
+        message = SubgoalCommand()
+        message.header.stamp = stamp
+        message.header.frame_id = self._odom_child_frame or ''
+        message.current_node_idx, message.subgoal_idx = int(current_node_idx), int(subgoal_idx)
+        message.reached_goal = bool(reached_goal)
+        if goal_pose is not None:
+            message.goal_pose_valid = True
+            message.goal_x, message.goal_y, message.goal_yaw = (float(v) for v in goal_pose)
+        self.subgoal_command_pub.publish(message)
+
+    def subgoal_command_callback(self, message):
+        from placenav.split_navigation import SubgoalCommand, valid_goal_pose
+        pose = (valid_goal_pose((message.goal_x, message.goal_y, message.goal_yaw))
+                if message.goal_pose_valid else None)
+        command = SubgoalCommand(message.header.stamp.to_nsec(), int(message.current_node_idx),
+                                 int(message.subgoal_idx), bool(message.reached_goal), pose)
+        with self.obs_lock:
+            self.subgoal_command = command
+        if command.reached_goal:
+            self.frame_gate.notify()  # stop now, even without a new camera frame
+
+    def _moved_goal_pose(self, command, stamp_ns):
+        """The command's relative goal at this frame (odometry between the two image times),
+        or None for the image-only goal."""
+        from placenav.split_navigation import move_goal_pose
+        reason, now, then = None, None, None
+        if command.goal_pose is None:
+            reason = 'no valid local pose from localization'
+        else:
+            now = self._image_odometry(stamp_ns)
+            with self.odom_condition:
+                then = self.odom_history.at(command.stamp_ns)
+                same_epoch = self.odom_history.epoch == self._last_odom_epoch
+            if now is None or then is None or not same_epoch:
+                reason = 'no continuous odometry between the command and this frame'
+        mode = 'subgoal image only (%s)' % reason if reason else 'subgoal image and local pose'
+        if mode != self._wp_goal_mode:
+            log = rospy.loginfo if reason is None or self._wp_goal_mode is None else rospy.logwarn
+            log('OmniVLA-edge goal: %s', mode)
+            self._wp_goal_mode = mode
+        return None if reason else move_goal_pose(command.goal_pose, then.pose, now.pose)
+
+    def navigate_waypoints(self, args: argparse.Namespace):
+        """--nav-role waypoint: waypoints toward the subgoal of the latest localization command.
+
+        Runs on every new camera frame in parallel with the localization node; it never waits
+        for the command of its own frame.
+        """
+        from placenav.split_navigation import command_status
+        rospy.loginfo('Waypoint inference only: subgoals from %s (timeout %.2f s)',
+                      SUBGOAL_COMMAND_TOPIC, args.subgoal_command_timeout)
+        max_age_ns = int(args.subgoal_command_timeout * 1e9)
+        avg_runtime, avg_runtime_count = 0., 0
+        last_stamp_ns = None
+        rate = self.frame_gate
+        while not rospy.is_shutdown():
+            rate.sleep()  # next camera frame (or a final command)
+            with self.obs_lock:
+                command = self.subgoal_command
+                # Entries are replaced, never modified: a shallow copy is a consistent snapshot.
+                context = list(self.context_queue)
+            if command is not None and command.reached_goal:
+                self._goal_reached = True
+                self.publish_terminal_stop()
+                rospy.loginfo('Localization reached the goal. Stopping...')
+                return
+            if len(context) < self.context_size + 1:
+                continue
+            start_time = time.time()
+            stamp = context[-1]['timestamp']
+            stamp_ns = stamp.to_nsec()
+            if stamp_ns == last_stamp_ns:
+                continue
+            last_stamp_ns = stamp_ns
+            previous_ns = context[-2]['timestamp'].to_nsec() if len(context) > 1 else None
+            problem = command_status(command, stamp_ns, previous_ns, self.map_size, max_age_ns)
+            if problem:
+                rospy.logwarn_throttle(2.0, 'No waypoints: %s', problem)
+                continue
+            goal_pose = self._moved_goal_pose(command, stamp_ns) if self.wp_goal_pose else None
+            context_tensor = torch.cat([obs['img'] for obs in context], dim=1).to(self.device)
+            sg_img = self.topomap_images[command.subgoal_idx].to(self.device)
+            with torch.no_grad():
+                if goal_pose is None:
+                    _, waypoints = self.waypoint_model(context_tensor, sg_img)
+                else:
+                    _, waypoints = self.waypoint_model(context_tensor, sg_img, goal_pose=goal_pose)
+            waypoints = to_numpy(waypoints[0])
+            if not np.isfinite(waypoints).all():
+                rospy.logerr_throttle(2.0, "Non-finite waypoint prediction; not publishing path")
+                continue
+            waypoints[:, :2] *= self.waypoint_scale
+            self.waypoint_pub.publish(Float32MultiArray(data=waypoints[args.target_waypoint_idx]))
+            viz_msg = Viz()
+            viz_msg.query_timestamp = stamp
+            viz_msg.subgoal_idx = command.subgoal_idx
+            viz_msg.waypoints = waypoints_to_ros_msg(waypoints)
+            self.viz_pub.publish(viz_msg)
+            loop_duration = time.time() - start_time
+            avg_runtime = (avg_runtime * avg_runtime_count + loop_duration) / (avg_runtime_count + 1)
+            avg_runtime_count += 1
+            rospy.loginfo(f"Average runtime: {avg_runtime:.3f} s, Runtime: {loop_duration:.3f} s, "
+                          f"subgoal {command.subgoal_idx}, command age {(stamp_ns - command.stamp_ns) / 1e9:+.2f} s")
 
     def navigate(self, args: argparse.Namespace):
         rospy.loginfo("Starting navigation")
@@ -647,12 +793,19 @@ class PlaceNavNode:
                         evaluation_msg.recovery_forward_score = selector.probabilities['forward']
                         evaluation_msg.recovery_backward_score = selector.probabilities['backward']
                         self.goal_evaluation_pub.publish(evaluation_msg)
-                    sg_img = self.topomap_images[subgoal_idx].to(self.device)
 
                     # Predict the waypoints to subgoal
-                    if reached_goal:
+                    if getattr(self, 'nav_role', 'full') == 'localization':
+                        # The waypoint node (other machine) predicts and publishes them.
+                        goal_pose = (self._waypoint_goal_pose(subgoal_idx, odometry)
+                                     if self.wp_goal_pose and not reached_goal else None)
+                        self._publish_subgoal_command(current_obs_timestamp, closest_node_idx,
+                                                      subgoal_idx, reached_goal, goal_pose)
+                        waypoints = None
+                    elif reached_goal:
                         waypoints = np.empty((0, 2))
                     else:
+                        sg_img = self.topomap_images[subgoal_idx].to(self.device)
                         goal_pose = (self._waypoint_goal_pose(subgoal_idx, odometry)
                                      if getattr(self, 'wp_goal_pose', False) else None)
                         with torch.no_grad():
@@ -702,16 +855,17 @@ class PlaceNavNode:
                 else:
                     raise ValueError(f"Subgoal mode {args.subgoal_mode} not recognized")
 
-                if not np.isfinite(waypoints).all():
+                if waypoints is not None and not np.isfinite(waypoints).all():
                     rospy.logerr_throttle(2.0, "Non-finite waypoint prediction; not publishing path")
                     rate.sleep()
                     continue
                 # Official ViNT/NoMaD/OmniVLA-edge actions are normalized displacements, not
                 # meters. Preserve legacy GNM behavior; scale only configured models.
-                waypoints[:, :2] *= self.waypoint_scale
+                if waypoints is not None:
+                    waypoints[:, :2] *= self.waypoint_scale
 
                 # Publish the waypoint
-                if not reached_goal:
+                if waypoints is not None and not reached_goal:
                     chosen_waypoint = waypoints[args.target_waypoint_idx]
                     waypoint_msg = Float32MultiArray()
                     waypoint_msg.data = chosen_waypoint
@@ -723,11 +877,14 @@ class PlaceNavNode:
                 avg_runtime_count += 1
                 rospy.loginfo(f"Average runtime: {avg_runtime:.3f} s, Runtime: {loop_duration:.3f} s")
 
-                # Publish information for visualization
-                viz_msg = Viz()
-                viz_msg.query_timestamp = current_obs_timestamp
-                viz_msg.subgoal_idx = subgoal_idx
-                viz_msg.waypoints = waypoints_to_ros_msg(waypoints)
+                # Publish information for visualization (the path adapter follows these
+                # waypoints; with --nav-role localization the waypoint node publishes them)
+                viz_msg = None
+                if waypoints is not None:
+                    viz_msg = Viz()
+                    viz_msg.query_timestamp = current_obs_timestamp
+                    viz_msg.subgoal_idx = subgoal_idx
+                    viz_msg.waypoints = waypoints_to_ros_msg(waypoints)
 
                 diagnostics = getattr(getattr(self, 'place_recognition_querier', None), "last_diagnostics", None)
                 if diagnostics is not None:
@@ -744,7 +901,8 @@ class PlaceNavNode:
                     diagnostics_msg.bayesian_belief_std = diagnostics["bayesian_belief_std"]
                     diagnostics_msg.bayesian_belief_entropy = diagnostics["bayesian_belief_entropy"]
                     self.localization_diagnostics_pub.publish(diagnostics_msg)
-                self.viz_pub.publish(viz_msg)
+                if viz_msg is not None:
+                    self.viz_pub.publish(viz_msg)
 
                 # # subgoal image publishing
                 # if subgoal_idx != self._last_subgoal_idx:
@@ -773,7 +931,10 @@ if __name__ == '__main__':
 
     placenav_node = PlaceNavNode(args)
     try:
-        placenav_node.navigate(args)
+        if placenav_node.nav_role == 'waypoint':
+            placenav_node.navigate_waypoints(args)
+        else:
+            placenav_node.navigate(args)
         if placenav_node._goal_reached and not rospy.is_shutdown():
             # Keep the terminal latch available to late/restarted bridge subscribers.
             rospy.spin()

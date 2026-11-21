@@ -169,6 +169,14 @@ def parse_args():
     parser.add_argument('--camera-hfov-deg', type=positive_float,
                         help='Equidistant horizontal field of view for --heading-correction '
                              '(default: camera_hfov_deg in the robot config)')
+    parser.add_argument('--nav-role', choices=['full', 'localization', 'waypoint'], default='full',
+                        help="'full' (default): everything in one process. Split over two machines: "
+                             "'localization' runs VPR, the filter, subgoal selection, local pose and "
+                             "heading correction and publishes /toponav/subgoal_command; 'waypoint' "
+                             "runs only the waypoint model toward that subgoal")
+    parser.add_argument('--subgoal-command-timeout', type=positive_float, default=0.6,
+                        help="--nav-role waypoint: do not publish waypoints when the latest subgoal "
+                             "command is further than this from the camera frame, in seconds")
     resets = parser.add_mutually_exclusive_group()
     resets.add_argument('--local-pose-reset', dest='local_pose_reset', action='store_true', default=True,
                         help='Enable local XY anchors at goal switches and recovery (default)')
@@ -260,6 +268,8 @@ def parse_args():
             args.filter_mode != 'bayesian' or args.subgoal_mode != 'place_recognition'):
         parser.error('--motion-model odometry requires --filter-mode bayesian '
                      '--subgoal-mode place_recognition')
+    if args.nav_role != 'full' and args.subgoal_mode != 'place_recognition':
+        parser.error('--nav-role localization/waypoint requires --subgoal-mode place_recognition')
     if args.subgoal_update != 'nearest' and (
             args.motion_model != 'odometry' or args.lookahead != 1):
         parser.error('--subgoal-update passage/arrival requires --motion-model odometry --lookahead 1')

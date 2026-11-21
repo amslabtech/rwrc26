@@ -42,6 +42,8 @@ usage()
       'Starts the GNM Path adapter. Use --no-path-adapter to suppress it.' \
       '  --remote-navigation: start only the path adapter; navigate.py runs on another' \
       '    machine (docker/xavier/navigate_xavier.sh). No GUI: its database is over there.' \
+      '  --nav-role localization: run navigate.py without the waypoint model; it publishes' \
+      '    /toponav/subgoal_command for navigate.py --nav-role waypoint on the Xavier (GUI shown).' \
       '  --path-adapter-source-frame FRAME (default: base_link)' \
       '  --path-adapter-target-frame FRAME (default: odom)' \
       'It never starts the PD controller or robot drivers.'

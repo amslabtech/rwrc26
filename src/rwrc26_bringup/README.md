@@ -226,6 +226,8 @@ TEBの終端停止は全モード共通で、遅れた経路・False通知では
 | `batch_interval` / `common_voxel_size` / `common_decay` | `0.1 s` / `0.05 m` / `0.8 s`（matched時） |
 | `gates_config` / `costmap_config` | `source_costmaps/config/{gates,costmap}.yaml` |
 | `remote_navigation` | `false`。`true` で navigate.py を起動せず path adapter だけ（Xavier で `docker/xavier/navigate_xavier.sh`）。`path_timeout` > 0 が必須 |
+| `remote_role` | `all`。`remote_navigation:=true` のとき Xavier で動かす範囲。`waypoint` で parrot は VPR・位置推定・局所姿勢・向きの補正（`navigate.py --nav-role localization`）と path adapter・GUI、Xavier はウェイポイント推論だけ（`docker/xavier/README.md`） |
+| `subgoal_command_timeout` | `0.6`。`remote_role:=waypoint` で、最新のサブゴールコマンドと Xavier のカメラ画像の時刻がこれ（s）より離れるとウェイポイントを出さない |
 | `image_topic` / `server_host` / `server_port` | `/usb_cam/image_raw` / `127.0.0.1` / `5557` |
 | `max_input_width` / `cloud_stride` | `640` / `4` |
 | `record` / `diagnostics` | `true` / `false` |

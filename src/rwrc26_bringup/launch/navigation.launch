@@ -53,6 +53,12 @@
   <!-- true: navigate.py runs on the Xavier (docker/xavier/navigate_xavier.sh); here only the
        path adapter. Requires path_timeout > 0 so TEB stops when the Xavier or the LAN stops. -->
   <arg name="remote_navigation" default="false"/>
+  <!-- With remote_navigation: what runs on the Xavier. all: navigate.py (as above).
+       waypoint: only the waypoint model; VPR, filter, local pose and heading correction run
+       here with the path adapter and the GUI. Waypoints stop when the latest subgoal command
+       is subgoal_command_timeout seconds from the Xavier's camera frame. -->
+  <arg name="remote_role" default="all"/>
+  <arg name="subgoal_command_timeout" default="0.6"/>
   <!-- Match bridge.launch defaults; explicit args override bridge_config. -->
   <arg name="reference_mode" default="latest"/>
   <arg name="retain_safe_path" default="false"/>
@@ -62,6 +68,7 @@
   <arg name="robot_base_frame" default="base_link"/>
   <arg name="odom_topic" default="/odom"/>
   <arg name="valid_remote" value="$(eval {True: True}[not arg('remote_navigation') or float(arg('path_timeout')) &gt; 0])"/>
+  <arg name="valid_remote_role" value="$(eval {True: True}[arg('remote_role') in ['all', 'waypoint'] and float(arg('subgoal_command_timeout')) &gt; 0])"/>
   <arg name="valid_reference" value="$(eval {True: True}[arg('reference_mode') in ['state_machine', 'latest', 'avoidance_commit'] and 0 &lt;= float(arg('path_timeout')) &lt; float('inf')])"/>
   <!-- Explicit opt-in switches the planner output to the live robot topic. -->
   <arg name="drive_robot" default="false"/>
@@ -214,6 +221,8 @@
     <param name="drive_robot" value="$(arg drive_robot)"/>
     <param name="cmd_vel_topic" value="$(arg cmd_vel_topic)"/>
     <param name="remote_navigation" value="$(arg remote_navigation)"/>
+    <param name="remote_role" value="$(arg remote_role)"/>
+    <param name="subgoal_command_timeout" value="$(arg subgoal_command_timeout)" type="double"/>
   </node>
 
   <node if="$(arg record)" pkg="rosbag" type="record" name="session_recorder" output="screen"

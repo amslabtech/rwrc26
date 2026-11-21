@@ -16,8 +16,8 @@ docker buildx build --platform linux/arm64 --load \
 docker run --rm --platform linux/arm64 -v "${PLACENAV_DIR}:/placenav:ro" "${IMAGE}" python3 -c "
 import importlib.util, rospy, h5py, cv2
 from io import BytesIO
-from placenav_viz_msgs.msg import Viz, LocalizationDiagnostics, GoalEvaluation, LocalGoalPose
-for message_type in (Viz, LocalizationDiagnostics, GoalEvaluation, LocalGoalPose):
+from placenav_viz_msgs.msg import Viz, LocalizationDiagnostics, GoalEvaluation, LocalGoalPose, SubgoalCommand
+for message_type in (Viz, LocalizationDiagnostics, GoalEvaluation, LocalGoalPose, SubgoalCommand):
     message = message_type()
     stream = BytesIO()
     message.serialize(stream)

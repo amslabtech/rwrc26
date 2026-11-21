@@ -103,6 +103,37 @@ sudo jetson_clocks
   2026-11-15 の実機（CosPlace + OmniVLA-edge）: 1 周期 約 155 ms（前処理込み）、`/waypoint` 5.3 Hz。
   `Average runtime` は起動直後の遅い周期を含む累積平均なので、しばらく高めに出る。
 
+### 分割構成：VPR・位置推定は parrot、OmniVLA-edge だけ Xavier（`remote_role:=waypoint`）
+
+parrot に余裕があるときの構成。parrot で VPR（SALAD・MegaLoc も可）、ベイズフィルタ、サブゴール選択、
+局所姿勢（`local_pose`）、到達時の向きの補正（`heading_correction`）を動かし、Xavier はウェイポイント推論だけを行う。
+`heading_correction:=sift_shift` は parrot の x86 イメージ（OpenCV 4.6）で動く（Xavier の OpenCV 4.2 には `cv2.SIFT_create` がない）。
+
+```bash
+# 1. parrot
+roslaunch rwrc26_bringup navigation.launch remote_navigation:=true remote_role:=waypoint path_timeout:=1.0 \
+    wp_model:=omnivla_edge pr_model:=salad local_pose:=true wp_goal_pose:=true heading_correction:=sift_shift \
+    topomap_dir:=<route> drive_robot:=false
+# 2. Xavier（今までと同じ）
+sudo jetson_clocks
+/mnt/ssd/PlaceNav/docker/xavier/navigate_xavier.sh
+```
+
+- parrot の `navigate.py --nav-role localization` は、位置推定した画像ごとに `/toponav/subgoal_command`
+  （`placenav_viz_msgs/SubgoalCommand`：サブゴール番号、到達、相対ゴール姿勢）を出す。ウェイポイントのモデルは読み込まない。
+- Xavier の `navigate.py --nav-role waypoint` は、カメラ画像が来るたびに最新のコマンドでウェイポイントを出す
+  （`/waypoint`・`/toponav/viz_info`）。**parrot の結果を待たない（並列）**。VPR のモデルは読み込まない。
+- コマンドの姿勢はコマンドの画像時刻のものなので、Xavier は自分の画像時刻までの `/odom` の移動分を足してから使う。
+  odom がつながらないとき、または parrot が姿勢を出していないときは、サブゴール画像だけ（modality 6）に戻してログに出す。
+- 最新のコマンドと Xavier の画像の時刻が `subgoal_command_timeout`（既定 0.6 s）より離れていると、ウェイポイントを出さない
+  （parrot の位置推定が止まった場合。TEB は `path_timeout` で止まる）。
+- parrot が最終ゴールに着くと、コマンドの `reached_goal` で Xavier もゼロのウェイポイントを出して止まる。
+  Xavier の navigate.py が止まっても、parrot の停止イベント（`/toponav/stop`）は出さない（Xavier だけ再起動できる）。
+- PlaceNav GUI は parrot に出る（位置推定の DB が parrot にあるため）。
+- **Xavier のイメージを作り直す必要がある**（メッセージ `SubgoalCommand` をイメージ内でビルドしているため）：
+  parrot で `./build_image.sh` → `./deploy.sh --image`。古いイメージでは Xavier 側が `SubgoalCommand` を import できずに止まる。
+- `remote_role:=all`（既定）は従来どおり navigate.py をすべて Xavier で動かす。
+
 ## 元に戻す（Xavier）
 
 ```bash
