@@ -59,4 +59,4 @@ whill:
     publish_rate: 20 # Hz
     max_accel: 0.10 # m/s^2
     max_angular_accel: 0.20 # rad/s^2
-    require_emergency_stop: true # fail closed until an emergency-stop message is received
+    require_emergency_stop: false # WHILL: no startup dependency on a ROS button-state publisher

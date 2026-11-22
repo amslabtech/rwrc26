@@ -258,6 +258,9 @@ roslaunch rwrc26_bringup omnivla_path_pd.launch
 
 WHILLで使う場合は既存のMotionDecisionとWHILLドライバ、C2、経路生成、および
 `src/run_safety_whill.sh` を起動し、このlaunchに `drive_robot:=true` を付ける。
-PDの出力は `/cmd_vel_nominal`、安全フィルタがカメラ・非常停止状態などを確認して
+PDの出力は `/cmd_vel_nominal`、安全フィルタがカメラと速度指令の鮮度、停止要求、ゴール到達を確認して
 `/local_path/cmd_vel` へ配信する。TEBや他の自律制御ノードから同じ速度トピックへ
 同時配信しない。追従器は障害物の検出や経路の再計画を行わない。
+
+WHILL設定では非常停止トピックの初回通知を待たない。通知された場合は
+`/emergency_stop=true` でも停止する。物理ボタンから車体までの停止経路は実機側で確認する。
