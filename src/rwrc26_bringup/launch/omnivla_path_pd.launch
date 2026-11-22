@@ -1,0 +1,23 @@
+<launch>
+  <!-- Start alongside omnivla_c2_preview.launch, or replay stamped Viz messages. -->
+  <arg name="drive_robot" default="false"/>
+  <arg name="waypoint_index" default="4"/>
+  <arg name="path_timeout" default="0.75"/>
+  <arg name="max_v" default="0.30"/>
+  <arg name="max_w" default="0.30"/>
+  <arg name="kp_v" default="1.0"/>
+  <arg name="kd_v" default="0.05"/>
+  <arg name="kp_w" default="1.5"/>
+  <arg name="kd_w" default="0.05"/>
+  <node pkg="rwrc26_bringup" type="omnivla_path_pd.py" name="omnivla_path_pd" output="screen" required="true">
+    <remap from="cmd_vel" to="$(eval '/cmd_vel_nominal' if arg('drive_robot') else '/fusion_validation/cmd_vel')"/>
+    <param name="waypoint_index" value="$(arg waypoint_index)"/>
+    <param name="path_timeout" value="$(arg path_timeout)"/>
+    <param name="max_v" value="$(arg max_v)"/>
+    <param name="max_w" value="$(arg max_w)"/>
+    <param name="kp_v" value="$(arg kp_v)"/>
+    <param name="kd_v" value="$(arg kd_v)"/>
+    <param name="kp_w" value="$(arg kp_w)"/>
+    <param name="kd_w" value="$(arg kd_w)"/>
+  </node>
+</launch>

@@ -232,3 +232,32 @@ rosbag play --clock bag/1119/omnivla_edge_odometry_nearest_2026-11-19-07-42-51.b
 RVizでは Fixed Frame を `odom`、Path を `/placenav/gnm_path` にする。
 このlaunchはCosPlaceとOmniVLA-edgeを使い、TEB、PD、深度ノード、車体ドライバーを起動しない。
 実カメラのraw画像を使うときは `use_sim_time` と `compressed_input` を省略する。
+
+### OmniVLA経路のPD追従（ROS1）
+
+経路生成とPDを一緒に起動する場合は次を実行する（ROUTEは使用する地図名）。
+
+```bash
+roslaunch rwrc26_bringup omnivla_c2_preview.launch topomap_dir:=ROUTE enable_pd:=true
+```
+
+C2の経路生成をすでに起動した場合は、別端末からPDだけを起動する。記録済みの
+`/toponav/viz_info` でも検証できる（bag再生時はROS時刻と `--clock` を合わせる）。
+
+```bash
+roslaunch rwrc26_bringup omnivla_path_pd.launch
+```
+
+既定の出力は `/fusion_validation/cmd_vel`。入力は撮影時刻付きの機体座標系の
+経路で、既定では5番目の点（`waypoint_index:=4`、前方・左が正、単位m）を追う。
+前後方向の誤差は目標点の前方距離、方位誤差は atan2(左変位, 前方距離)。
+新規の撮影時刻間の差分からD項を計算し、サブゴール変更時にはD項をリセットする。
+速度指令は20 Hz、初期上限は0.30 m/s、0.30 rad/s。ゲインと上限はlaunch引数で変更できる。
+0.75秒以上の入力途絶、期限切れの画像、対象点の欠落ではゼロ指令に戻る。
+ゴール到達・停止信号を受けるとノード再起動まで停止する。
+
+WHILLで使う場合は既存のMotionDecisionとWHILLドライバ、C2、経路生成、および
+`src/run_safety_whill.sh` を起動し、このlaunchに `drive_robot:=true` を付ける。
+PDの出力は `/cmd_vel_nominal`、安全フィルタがカメラ・非常停止状態などを確認して
+`/local_path/cmd_vel` へ配信する。TEBや他の自律制御ノードから同じ速度トピックへ
+同時配信しない。追従器は障害物の検出や経路の再計画を行わない。

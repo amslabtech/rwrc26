@@ -1,6 +1,8 @@
 <launch>
-  <!-- Inference and pre-TEB Path only. Supply C2 RGB, odometry and TF externally. -->
+  <!-- Inference and pre-TEB path preview by default. Supply C2 RGB, odometry and TF externally. -->
   <arg name="topomap_dir"/>
+  <arg name="enable_pd" default="false"/>
+  <arg name="drive_robot" default="false"/>
   <arg name="placenav_src" default="/home/user/ws/src/PlaceNav/src"/>
   <arg name="remote_navigation" default="false"/>
   <arg name="subgoal_update" default="nearest"/>
@@ -23,4 +25,7 @@
     <param name="remote_navigation" value="$(arg remote_navigation)"/>
     <param name="visualization" value="false"/>
   </node>
+  <include if="$(arg enable_pd)" file="$(find rwrc26_bringup)/launch/omnivla_path_pd.launch">
+    <arg name="drive_robot" value="$(arg drive_robot)"/>
+  </include>
 </launch>
