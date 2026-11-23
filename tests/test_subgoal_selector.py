@@ -44,9 +44,9 @@ class SelectorTest(unittest.TestCase):
     def test_turn_arrival_uses_signed_delta_from_confirmed_node(self):
         for direction in (1, -1):
             with self.subTest(direction=direction):
-                angles = [0, 0, 20 * direction, 20 * direction, 20 * direction]
-                self.make_map([0, 3, 6, 9, 12], [math.radians(a) for a in angles])
-                sel = ProgressSubgoalSelector(self.motion, 4, mode='arrival_turn')
+                angles = [direction * a for a in [0, 20, 40, 60, 60, 60]]
+                self.make_map([0, 3, 6, 9, 12, 15], [math.radians(a) for a in angles])
+                sel = ProgressSubgoalSelector(self.motion, 5, mode='arrival_turn')
                 def step(stamp, node, yaw):
                     self.mass((3 * node, 1))
                     self.motion.last_odometry = OdomSample(
@@ -54,11 +54,39 @@ class SelectorTest(unittest.TestCase):
                     return sel.update(node, stamp)
                 step(1, 0, 175)
                 self.assertEqual(step(2, 1, 179), (2, False))
-                self.assertEqual(step(3, 2, 174), (2, False))
+                self.assertEqual(step(3, 2, 174), (3, False))  # Preview next turn image.
+                self.assertEqual(step(4, 3, 174), (3, False))
                 self.assertEqual(sel.status, 'WAITING_TURN')
-                step(4, 3, 174)
-                self.assertEqual(step(5, 3, 174), (2, False))  # No forward rescue.
-                self.assertEqual(step(6, 2, -169), (3, False))  # +12° across wrap.
+                step(5, 4, 174)
+                self.assertEqual(step(6, 4, 174), (3, False))
+                self.assertEqual(step(7, 3, -158), (4, False))  # +23° from entry.
+
+    def test_early_rotation_is_remembered_only_within_the_same_bend(self):
+        self.make_map([0, 1, 2, 3, 4, 5], list(map(math.radians, [0, 20, 40, 60, 40, 20])))
+        sel = ProgressSubgoalSelector(self.motion, 5, mode='arrival_turn',
+                                     turn_check_start_deg=20, turn_required_ratio=.5)
+        def step(stamp, closest, yaw):
+            self.mass((closest, 1))
+            self.motion.last_odometry = OdomSample(stamp, (0, 0, math.radians(yaw)), 'odom', 'base_link')
+            return sel.update(closest, stamp)
+        step(1, 0, 0)
+        step(2, 1, 0)
+        step(3, 1, 27)  # Started turning before reaching node 2.
+        step(4, 2, 20)
+        self.assertEqual(step(5, 3, -2), (3, False))  # Undid the turn.
+        self.assertEqual(step(6, 3, 8), (4, False))  # Within tolerance again.
+        step(7, 4, 8)  # First turning node of the next (right-hand) bend.
+        self.assertEqual(sel.turn_anchor[0], 4)
+        self.assertEqual(sel.peak_signed_turn, 0.)
+
+    def test_turn_forward_recovery_exposes_one_goal(self):
+        sel = ProgressSubgoalSelector(self.motion, 4, mode='arrival_turn')
+        self.mass((0, 1))
+        sel.update(0, 1)
+        self.mass((10.5, 1))
+        sel.update(3, 2)
+        self.assertEqual(sel.update(3, 3), (2, False))
+        self.assertEqual(sel.status, 'RECOVERED_FORWARD')
 
     def test_initial_goal_immediate_even_with_ambiguous_global_belief(self):
         self.mass((0, .5), (14, .5))

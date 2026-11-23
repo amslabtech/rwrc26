@@ -184,6 +184,8 @@ def parse_args():
                         help='Keep local pose output but disable XY resets in every subgoal mode')
     parser.add_argument('--subgoal-update', choices=['nearest', 'passage', 'arrival', 'arrival_turn'], default='nearest',
                         help='Nearest+lookahead, retained passage, position arrival, or arrival with relative odometry turn')
+    parser.add_argument('--turn-check-start-deg', type=positive_float, default=30.)
+    parser.add_argument('--turn-required-ratio', type=probability, default=0.25)
     parser.add_argument('--pass-threshold', type=probability, default=0.5)
     parser.add_argument('--pass-confirmations', type=positive_int, default=2,
                         help='Fresh-image confirmations for passage, recovery and final stopping; '

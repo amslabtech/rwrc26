@@ -136,6 +136,8 @@ class NavigationLaunchTest(unittest.TestCase):
                 for enabled in [False, True]:
                     with self.subTest(launch=launch.name, mode=mode, enabled=enabled):
                         options = ['subgoal_update:='+mode, 'local_pose_reset:='+str(enabled).lower()]
+                        if mode == 'arrival_turn':
+                            options.extend(['turn_check_start_deg:=35', 'turn_required_ratio:=0.4'])
                         config = load_config_default([(str(launch), options)], 11311, verbose=False)
                         prefix = '/placenav_runner/'
                         params = {k[len(prefix):]:p.value for k,p in config.params.items() if k.startswith(prefix)}
@@ -144,6 +146,9 @@ class NavigationLaunchTest(unittest.TestCase):
                         with patch.object(sys, 'argv', ['navigate.py']+required+command[2:]):
                             args = parser.parse_args()
                         self.assertEqual(args.subgoal_update, mode)
+                        if mode == 'arrival_turn':
+                            self.assertEqual(args.turn_check_start_deg, 35.)
+                            self.assertEqual(args.turn_required_ratio, .4)
                         self.assertIs(args.local_pose, True)
                         self.assertIs(args.local_pose_reset, enabled)
                         self.assertEqual(sum(n.name == 'local_goal_visualizer' for n in config.nodes), 1)

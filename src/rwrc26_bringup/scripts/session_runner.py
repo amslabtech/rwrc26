@@ -107,6 +107,12 @@ def navigation_command(params):
         if not math.isfinite(value) or (value < 0 if name == 'final_goal_tolerance' else not 0 < value <= 1):
             raise ValueError('Invalid '+name)
         command += ['--'+name.replace('_', '-'), str(value)]
+    if update == 'arrival_turn':
+        start = float(params.get('turn_check_start_deg', 30.))
+        ratio = float(params.get('turn_required_ratio', .25))
+        if not math.isfinite(start) or start <= 0 or not 0 < ratio <= 1:
+            raise ValueError('Invalid relative turn thresholds')
+        command += ['--turn-check-start-deg', str(start), '--turn-required-ratio', str(ratio)]
     count = int(params.get('pass_confirmations', 2))
     if count < 1:
         raise ValueError('pass_confirmations must be positive')
