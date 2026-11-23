@@ -118,7 +118,7 @@ class NavigationLaunchTest(unittest.TestCase):
                         for flag, value in expected.items():
                             self.assertEqual(float(command[command.index(flag)+1]), value, flag)
 
-    def test_six_mode_reset_patterns_reach_the_actual_parser_in_both_launches(self):
+    def test_mode_reset_patterns_reach_the_actual_parser_in_both_launches(self):
         import importlib.util
         from unittest.mock import patch
         import sys
@@ -132,7 +132,7 @@ class NavigationLaunchTest(unittest.TestCase):
                     '--model-config-path', 'models.yaml', '--topomap-base-dir', 'maps',
                     '--model-weight-dir', 'weights']
         for launch in [LAUNCH, ROOT/'launch/navigation_debug.launch']:
-            for mode in ['nearest', 'passage', 'arrival']:
+            for mode in ['nearest', 'passage', 'arrival', 'arrival_turn']:
                 for enabled in [False, True]:
                     with self.subTest(launch=launch.name, mode=mode, enabled=enabled):
                         options = ['subgoal_update:='+mode, 'local_pose_reset:='+str(enabled).lower()]

@@ -202,6 +202,12 @@ roslaunch rwrc26_bringup navigation_debug.launch \
 別の配置では`placenav_src`を実際の`navigate_whill.sh`があるディレクトリに変更する。
 実機・debugとも既定は`subgoal_update:=arrival local_pose:=true`。
 相対ゴールポーズのための通常到達時XY補正を使う構成としている。
+実験用の `subgoal_update:=arrival_turn` は、中間ノードの通常到達で記録した
+オドメトリ方位を次の判定の基準にする。隣接ノードの教示方位差が15°以上なら、
+位置条件に加え、同じ向きに教示角の50%以上旋回したときに更新する。
+旋回不足では前方救済も保留し、後方救済は許す。開始・救済・オドメトリ不連続後は
+最初の位置到達で基準を取り直す。最終停止条件は通常のarrivalと共通。
+
 通常のXYリセットは`nearest`・`passage`・`arrival`共通で`local_pose_reset`を切り替えられる。
 各モードで`local_pose:=true`のままリセットをtrue/falseにして6パターンを比較できる。
 補正内容は記録ノードのXYへの位置合わせで、nearestは画像変更時の推定現在ノード、

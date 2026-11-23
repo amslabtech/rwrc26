@@ -11,6 +11,11 @@ class ProgressSubgoalSelector:
                  threshold=0.5, confirmations=2, min_local_mass=0.8,
                  final_tolerance=0.5, evaluation_config=None,
                  recovery_distance=4.0, recovery_threshold=0.8):
+        # arrival_turn shares all arrival behavior except the relative-yaw gate.
+        self.turn_enabled = mode == 'arrival_turn'
+        self.turn_anchor = None
+        if self.turn_enabled:
+            mode = 'arrival'
         if mode not in ('nearest', 'passage', 'arrival'):
             raise ValueError('Unknown subgoal update mode')
         if mode != 'nearest' and lookahead != 1:
@@ -44,6 +49,30 @@ class ProgressSubgoalSelector:
         self.decision_goal_idx = -1
         self.decision_score = 0.
 
+    def clear_odometry_reference(self):
+        self.turn_anchor = None
+        self.reset_confirmation()
+
+    def _set_turn_anchor(self, node):
+        if self.turn_enabled and self.motion.last_odometry is not None:
+            self.turn_anchor = (node, self.motion.last_odometry.pose[2])
+
+    def _turn_satisfied(self):
+        if self.turn_anchor is None:
+            # First position-confirmed arrival establishes the odometry reference.
+            return True
+        node, start_yaw = self.turn_anchor
+        delta = self.motion.node_yaw[self.subgoal] - self.motion.node_yaw[node]
+        taught = math.atan2(math.sin(delta), math.cos(delta))
+        if abs(taught) < math.radians(15):
+            return True
+        sample = self.motion.last_odometry
+        if sample is None:
+            return False
+        delta = sample.pose[2] - start_yaw
+        measured = math.atan2(math.sin(delta), math.cos(delta))
+        return math.copysign(1., taught) * measured >= 0.5 * abs(taught)
+
     def reset_confirmation(self):
         self.count = 0
         self.recovery_count = 0
@@ -53,7 +82,7 @@ class ProgressSubgoalSelector:
         if self.reached or stamp_ns == self.last_stamp:
             return self.subgoal, self.reached
         if self.last_stamp is not None and stamp_ns < self.last_stamp:
-            self.reset_confirmation()
+            self.clear_odometry_reference()
         self.last_stamp = stamp_ns
         initial = self.subgoal is None
         if initial or self.mode == 'nearest':
@@ -88,12 +117,16 @@ class ProgressSubgoalSelector:
         if self.mode == 'nearest' and not is_final:
             self.status = 'NEAREST'
             return self.subgoal, False
+        turn_ok = is_final or not self.turn_enabled or self._turn_satisfied()
         if metrics['neighborhood_mass'] < self.min_local_mass:
             self.count = 0
             self.status = 'REMOTE_BELIEF'
         elif self.decision_score < self.threshold:
             self.count = 0
             self.status = 'WAITING'
+        elif not turn_ok:
+            self.count = 0
+            self.status = 'WAITING_TURN'
         else:
             self.count += 1
             self.status = 'CONFIRMING'
@@ -107,6 +140,7 @@ class ProgressSubgoalSelector:
                     self.reached = True
                     self.status = 'GOAL_REACHED'
                 else:
+                    self._set_turn_anchor(self.subgoal)
                     self.subgoal += 1
                     self.status = 'ADVANCED_ARRIVAL' if self.mode == 'arrival' else 'ADVANCED_PASSAGE'
                 return self.subgoal, self.reached
@@ -115,7 +149,7 @@ class ProgressSubgoalSelector:
         # A goal can be ahead by a normal image spacing, but should not remain
         # behind a passed neighborhood. All distances are physical route meters.
         candidate = min(closest_node + self.lookahead, self.final_node)
-        direction = ('FORWARD' if candidate > self.subgoal and forward >= self.recovery_threshold
+        direction = ('FORWARD' if turn_ok and candidate > self.subgoal and forward >= self.recovery_threshold
                      else 'BACKWARD' if candidate < self.subgoal and backward >= self.recovery_threshold
                      else None)
         position = self.motion.node_s[closest_node]
@@ -132,6 +166,7 @@ class ProgressSubgoalSelector:
         self.status = 'RECOVERY_PENDING_' + direction
         if self.recovery_count >= self.confirmations:
             self.subgoal = candidate
+            self.turn_anchor = None  # Recovery is not a confirmed arrival.
             self.reset_confirmation()
             self.status = 'RECOVERED_' + direction
         # Recovery is not an arrival observation and cannot terminate navigation.

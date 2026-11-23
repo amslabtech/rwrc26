@@ -498,7 +498,7 @@ class PlaceNavNode:
             if self.local_pose_tracker is not None and self.local_pose_tracker.mean is not None:
                 self.local_pose_tracker.invalidate('ODOMETRY_DISCONTINUITY')
             if self.goal_selector is not None:
-                self.goal_selector.reset_confirmation()
+                self.goal_selector.clear_odometry_reference()
             self._last_odom_epoch = epoch
         return sample
 
