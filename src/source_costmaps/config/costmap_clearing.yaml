@@ -1,0 +1,138 @@
+# costmap.yaml + STVL frustum clearing (official rgbd*_mark / rgbd*_clear pattern).
+# Each layer gets a clearing-only source on its own gate output; STVL uses only the
+# frame's stamp and sensor_frame pose (no points are buffered for clearing-only sources).
+# Gate outputs (not raw clouds): a frame dropped by the gate (stale/TF) clears nothing,
+# so clearing never runs ahead of marking, and D435's ~300k-point raw cloud is not
+# subscribed twice. Every gate frame is published, also when empty.
+#
+# A voxel inside a frustum is removed once
+#   voxel_decay - t - decay_acceleration * t^3 / 6 < 0,   t = time since last marked,
+# i.e. decay_acceleration = 6 * (voxel_decay - t_clear) / t_clear^3. Voxels outside
+# every frustum keep the plain voxel_decay.
+#
+# Frustum geometry (STVL noetic DepthCameraFrustum, optical frame, +Z forward): corner
+# rays are at range max_z, the near plane is at z = min_z*cos(v/2)*cos(h/2), and the
+# horizontal half-angle widens to atan(tan(h/2)/cos(v/2)) at the top/bottom edges.
+# min_z/max_z are chosen so every cleared voxel lies inside the gate's range band
+# (otherwise voxels the gate can no longer re-mark, e.g. obstacles closer than
+# min_range, would be erased). FOVs stay inside the published clouds' angular extent
+# (C2/UniK3D ±45 x ±35 deg, D435 color-aligned ±27 x ±21 deg, measured from bags).
+# Check: tools/stvl/frustum_check.py H V MIN_Z MAX_Z GATE_MIN GATE_MAX [BAG TOPIC]
+
+local_costmap:
+  global_frame: odom
+  robot_base_frame: base_link
+  update_frequency: 5.0 # 10.0
+  publish_frequency: 2.0 # 5.0
+  transform_tolerance: 0.5
+  rolling_window: true
+  static_map: false
+  width: 6.0 # 12.0
+  height: 6.0 # 12.0
+  resolution: 0.05
+  track_unknown_space: false
+  always_send_full_costmap: true
+  footprint: [[-0.15, -0.30], [-0.15, 0.30], [0.85, 0.30], [0.85, -0.30]]
+  footprint_padding: 0.02
+  plugins:
+    - {name: d435, type: "spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer"}
+    - {name: unik3d, type: "spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer"}
+    - {name: inflation, type: "costmap_2d::InflationLayer"}
+
+  d435:
+    enabled: true
+    voxel_decay: 30.0 # 0.8
+    decay_model: 0
+    voxel_size: 0.05
+    track_unknown_space: false
+    mark_threshold: 0 # 1
+    max_obstacle_height: 2.0
+    origin_z: 0.0
+    update_footprint_enabled: true
+    combination_method: 1
+    publish_voxel_map: true
+    transform_tolerance: 0.5 # 0.2
+    mapping_mode: false
+    observation_sources: cloud cloud_clear
+    cloud:
+      data_type: PointCloud2
+      topic: /obstacles/d435/points
+      # Points are in odom; ranging origin must remain the physical camera.
+      sensor_frame: realsense_color_optical_frame
+      obstacle_range: 1.0 # 3.0
+      marking: true
+      clearing: false
+      expected_update_rate: 0.0 # 0.5
+      observation_persistence: 0.0
+      clear_after_reading: true
+      # Height/range/downsampling were applied by the acquisition-time gate.
+      filter: none
+
+    cloud_clear:
+      data_type: PointCloud2
+      topic: /obstacles/d435/points
+      sensor_frame: realsense_color_optical_frame
+      marking: false
+      clearing: true
+      model_type: 0 # depth camera frustum
+      # 46 x 36 deg; range 0.16-0.99 m inside gate 0.15-1.0 m
+      horizontal_fov_angle: 0.803
+      vertical_fov_angle: 0.628
+      min_z: 0.18
+      max_z: 1.0
+      # t_clear = 1.0 s with voxel_decay 30.0
+      decay_acceleration: 174.0
+      expected_update_rate: 0.0
+      observation_persistence: 0.0
+      clear_after_reading: true
+      filter: none
+  unik3d:
+    enabled: true
+    voxel_decay: 30.0 # 0.4
+    decay_model: 0
+    voxel_size: 0.05 # 0.10
+    track_unknown_space: false
+    mark_threshold: 0 # 1
+    max_obstacle_height: 2.0
+    origin_z: 0.0
+    update_footprint_enabled: true
+    combination_method: 1
+    publish_voxel_map: true
+    transform_tolerance: 0.5 # 0.2
+    mapping_mode: false
+    observation_sources: cloud cloud_clear
+    cloud:
+      data_type: PointCloud2
+      topic: /obstacles/unik3d/points
+      sensor_frame: c2_camera_optical_frame
+      obstacle_range: 3.0 # 6.0
+      marking: true
+      clearing: false
+      expected_update_rate: 0.0 # 1.0
+      observation_persistence: 0.0
+      clear_after_reading: true
+      filter: none
+
+    cloud_clear:
+      data_type: PointCloud2
+      topic: /obstacles/unik3d/points
+      sensor_frame: c2_camera_optical_frame
+      marking: false
+      clearing: true
+      model_type: 0 # depth camera frustum
+      # 70 x 55 deg; range 0.52-0.98 m inside gate 0.5-1.0 m (axis z 0.51-0.73)
+      horizontal_fov_angle: 1.222
+      vertical_fov_angle: 0.96
+      min_z: 0.7
+      max_z: 1.0
+      # t_clear = 1.5 s with voxel_decay 30.0
+      decay_acceleration: 50.7
+      expected_update_rate: 0.0
+      observation_persistence: 0.0
+      clear_after_reading: true
+      filter: none
+  inflation:
+    enabled: true
+    inflation_radius: 0.70
+    cost_scaling_factor: 3.0
+    inflate_unknown: false
