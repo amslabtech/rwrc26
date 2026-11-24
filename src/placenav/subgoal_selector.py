@@ -18,9 +18,10 @@ class ProgressSubgoalSelector:
                  recovery_distance=4.0, recovery_threshold=0.8,
                  turn_check_start_deg=30., turn_required_ratio=0.25):
         # arrival_turn shares all arrival behavior except the relative-yaw gate.
-        self.turn_enabled = mode == 'arrival_turn'
+        self.bend_turn = mode == 'arrival_turn'
+        self.turn_enabled = self.bend_turn or mode == 'arrival_turn_step'
         self.turn_anchor = None
-        if self.turn_enabled:
+        if self.bend_turn:
             if not math.isfinite(turn_check_start_deg) or turn_check_start_deg <= 0:
                 raise ValueError('turn_check_start_deg must be positive')
             if not 0 < turn_required_ratio <= 1:
@@ -34,6 +35,7 @@ class ProgressSubgoalSelector:
             for node, sign in enumerate(direction):
                 entry = self.turn_entry[-1] if node and sign and sign == direction[node-1] else node
                 self.turn_entry.append(entry)
+        if self.turn_enabled:
             mode = 'arrival'
         self.previous_yaw = None
         self.turn_yaw = 0.
@@ -87,7 +89,11 @@ class ProgressSubgoalSelector:
         self.previous_yaw = yaw
 
     def _set_turn_anchor(self, node):
-        if not self.turn_enabled or self.previous_yaw is None:
+        if self.turn_enabled and not self.bend_turn:
+            if self.motion.last_odometry is not None:
+                self.turn_anchor = (node, self.motion.last_odometry.pose[2])
+            return
+        if not self.bend_turn or self.previous_yaw is None:
             return
         if self.turn_anchor is None or self.turn_entry[node] != self.turn_entry[self.turn_anchor[0]]:
             self.turn_anchor = (node, self.turn_yaw)
@@ -97,6 +103,17 @@ class ProgressSubgoalSelector:
         if self.turn_anchor is None:
             return True
         node, start_yaw = self.turn_anchor
+        if not self.bend_turn:
+            delta = self.motion.node_yaw[self.subgoal] - self.motion.node_yaw[node]
+            taught = math.atan2(math.sin(delta), math.cos(delta))
+            if abs(taught) < math.radians(15):
+                return True
+            sample = self.motion.last_odometry
+            if sample is None:
+                return False
+            delta = sample.pose[2] - start_yaw
+            measured = math.atan2(math.sin(delta), math.cos(delta))
+            return math.copysign(1., taught) * measured >= 0.5 * abs(taught)
         if self.turn_entry[node] != self.turn_entry[self.subgoal]:
             return True
         taught = self.map_yaw[self.subgoal] - self.map_yaw[node]
@@ -118,7 +135,7 @@ class ProgressSubgoalSelector:
         if self.last_stamp is not None and stamp_ns < self.last_stamp:
             self.clear_odometry_reference()
         self.last_stamp = stamp_ns
-        if self.turn_enabled:
+        if self.bend_turn:
             self._observe_yaw()
         initial = self.subgoal is None
         if initial or self.mode == 'nearest':
@@ -201,7 +218,7 @@ class ProgressSubgoalSelector:
         self.recovery_count += 1
         self.status = 'RECOVERY_PENDING_' + direction
         if self.recovery_count >= self.confirmations:
-            if self.turn_enabled and direction == 'FORWARD':
+            if self.bend_turn and direction == 'FORWARD':
                 # Keep the turn reference and expose one new goal per recovery.
                 self._set_turn_anchor(self.subgoal)
                 self.subgoal += 1

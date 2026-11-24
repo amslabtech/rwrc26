@@ -95,8 +95,8 @@ def navigation_command(params):
         raise ValueError('local_pose_reset must be a YAML boolean')
     command.append('--local-pose-reset' if reset else '--no-local-pose-reset')
     update = str(params.get('subgoal_update', 'nearest'))
-    if update not in ('nearest', 'passage', 'arrival', 'arrival_turn'):
-        raise ValueError('subgoal_update must be nearest, passage, arrival or arrival_turn')
+    if update not in ('nearest', 'passage', 'arrival', 'arrival_turn', 'arrival_turn_step'):
+        raise ValueError('subgoal_update must be nearest, passage, arrival or arrival_turn/arrival_turn_step')
     if update != 'nearest' and (motion != 'odometry' or int(params.get('lookahead', 1)) != 1):
         raise ValueError('passage/arrival require odometry and lookahead=1')
     command += ['--subgoal-update', update]

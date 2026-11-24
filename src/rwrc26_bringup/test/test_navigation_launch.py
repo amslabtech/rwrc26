@@ -132,7 +132,7 @@ class NavigationLaunchTest(unittest.TestCase):
                     '--model-config-path', 'models.yaml', '--topomap-base-dir', 'maps',
                     '--model-weight-dir', 'weights']
         for launch in [LAUNCH, ROOT/'launch/navigation_debug.launch']:
-            for mode in ['nearest', 'passage', 'arrival', 'arrival_turn']:
+            for mode in ['nearest', 'passage', 'arrival', 'arrival_turn', 'arrival_turn_step']:
                 for enabled in [False, True]:
                     with self.subTest(launch=launch.name, mode=mode, enabled=enabled):
                         options = ['subgoal_update:='+mode, 'local_pose_reset:='+str(enabled).lower()]

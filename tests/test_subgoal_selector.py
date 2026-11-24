@@ -88,6 +88,34 @@ class SelectorTest(unittest.TestCase):
         self.assertEqual(sel.update(3, 3), (2, False))
         self.assertEqual(sel.status, 'RECOVERED_FORWARD')
 
+    def test_step_turn_arrival_uses_signed_delta_from_confirmed_node(self):
+        for direction in (1, -1):
+            with self.subTest(direction=direction):
+                angles = [0, 0, 20 * direction, 20 * direction, 20 * direction]
+                self.make_map([0, 3, 6, 9, 12], [math.radians(a) for a in angles])
+                sel = ProgressSubgoalSelector(self.motion, 4, mode='arrival_turn_step')
+                def step(stamp, node, yaw):
+                    self.mass((3 * node, 1))
+                    self.motion.last_odometry = OdomSample(
+                        stamp, (0, 0, math.radians(yaw * direction)), 'odom', 'base_link')
+                    return sel.update(node, stamp)
+                step(1, 0, 175)
+                self.assertEqual(step(2, 1, 179), (2, False))
+                self.assertEqual(step(3, 2, 174), (2, False))
+                self.assertEqual(sel.status, 'WAITING_TURN')
+                step(4, 3, 174)
+                self.assertEqual(step(5, 3, 174), (2, False))  # No forward rescue.
+                self.assertEqual(step(6, 2, -169), (3, False))  # +12° across wrap.
+
+    def test_step_turn_forward_recovery_uses_full_candidate(self):
+        sel = ProgressSubgoalSelector(self.motion, 4, mode='arrival_turn_step')
+        self.mass((0, 1))
+        sel.update(0, 1)
+        self.mass((10.5, 1))
+        sel.update(3, 2)
+        self.assertEqual(sel.update(3, 3), (4, False))
+        self.assertEqual(sel.status, 'RECOVERED_FORWARD')
+
     def test_initial_goal_immediate_even_with_ambiguous_global_belief(self):
         self.mass((0, .5), (14, .5))
         for mode in ('nearest', 'passage', 'arrival'):
