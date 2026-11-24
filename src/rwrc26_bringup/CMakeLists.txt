@@ -3,7 +3,7 @@ project(rwrc26_bringup)
 find_package(catkin REQUIRED)
 catkin_package()
 catkin_install_python(PROGRAMS scripts/session_runner.py scripts/local_goal_visualizer.py
-  scripts/decompress_depth_bag.py
+  scripts/decompress_depth_bag.py scripts/road_edge_stop.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 install(DIRECTORY launch config rviz DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
 install(FILES README.md DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})

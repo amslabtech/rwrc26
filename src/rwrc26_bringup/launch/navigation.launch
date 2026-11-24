@@ -1,7 +1,9 @@
 <launch>
   <!-- Robot drivers/TF and the GPU model server must already be running. -->
   <arg name="image_topic" default="/usb_cam/image_raw"/>
-  <arg name="road_edge" default="false"/>
+  <arg name="road_edge_stop" default="false"/>
+  <arg name="road_edge" default="$(arg road_edge_stop)"/>
+  <arg name="valid_road_edge_stop" value="$(eval {True: True}[not arg('road_edge_stop') or arg('road_edge')])"/>
   <arg name="road_edge_target_gate" default="true"/>
   <arg name="road_edge_config" default="$(find road_edge_detector)/config/c2.yaml" if="$(arg road_edge)"/>
   <include if="$(arg road_edge)" file="$(find road_edge_detector)/launch/road_edge_detector.launch">
@@ -92,6 +94,10 @@
   <arg name="drive_robot" default="false"/>
   <arg name="robot_cmd_vel_topic" default="/local_path/cmd_vel"/>
   <arg name="cmd_vel_topic" value="$(eval arg('robot_cmd_vel_topic') if arg('drive_robot') else '/fusion_validation/cmd_vel')"/>
+  <arg name="planner_cmd_vel_topic" value="$(eval '/road_edge_stop/input' if arg('road_edge_stop') else arg('cmd_vel_topic'))"/>
+  <node if="$(arg road_edge_stop)" pkg="rwrc26_bringup" type="road_edge_stop.py" name="road_edge_stop" required="true">
+    <remap from="~output" to="$(arg cmd_vel_topic)"/>
+  </node>
   <arg name="fusion_mode" default="layers"/>
   <arg name="comparison_profile" default="$(eval 'matched' if arg('fusion_mode') == 'points' else 'current')"/>
   <arg name="batch_interval" default="0.1"/>
@@ -181,7 +187,7 @@
        Do not also launch bridge.launch or standalone costmaps.launch. -->
   <node pkg="placenav_teb_bridge" type="placenav_teb_bridge_node" name="placenav_teb_bridge"
         output="screen" required="true">
-    <param name="cmd_vel_topic" value="$(arg cmd_vel_topic)"/>
+    <param name="cmd_vel_topic" value="$(arg planner_cmd_vel_topic)"/>
     <param name="diagnostics_enabled" value="$(arg diagnostics)"/>
     <param name="retain_safe_path" value="$(arg retain_safe_path)"/>
     <param name="reference_mode" value="$(arg reference_mode)"/>
