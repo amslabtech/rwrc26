@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>road_edge_detector</name>
+  <version>0.3.2</version>
+  <description>
+    C2 広角カメラの画像から、横断歩道へ進入する手前側の道路端（歩道と車道の境界）を検知する（第1段階）。
+    rwrc23_stop_line_detector を参考に、道路端向けに検知処理を作り直したもの。
+  </description>
+  <maintainer email="todo@example.com">amsl</maintainer>
+  <license>TODO</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>rospy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <exec_depend>rosbag</exec_depend>
+  <exec_depend>placenav_viz_msgs</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <!-- LSD は pip の ocrd-fork-pylsd==0.0.8 を使う（rosdep には無いので README の手順で入れる） -->
+</package>

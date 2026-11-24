@@ -1,6 +1,14 @@
 <launch>
   <!-- Robot drivers/TF and the GPU model server must already be running. -->
   <arg name="image_topic" default="/usb_cam/image_raw"/>
+  <arg name="road_edge" default="false"/>
+  <arg name="road_edge_target_gate" default="true"/>
+  <arg name="road_edge_config" default="$(find road_edge_detector)/config/c2.yaml" if="$(arg road_edge)"/>
+  <include if="$(arg road_edge)" file="$(find road_edge_detector)/launch/road_edge_detector.launch">
+    <arg name="image_topic" value="$(arg image_topic)/compressed"/>
+    <arg name="config" value="$(arg road_edge_config)"/>
+    <arg name="use_target_gate" value="$(arg road_edge_target_gate)"/>
+  </include>
   <arg name="server_host" default="127.0.0.1"/>
   <arg name="server_port" default="5557"/>
   <arg name="max_input_width" default="640"/>
