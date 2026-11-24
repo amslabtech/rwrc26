@@ -52,7 +52,7 @@ RUN printf 'typing-extensions==4.13.2\n' > /tmp/placenav-constraints.txt \
       -c /tmp/placenav-constraints.txt \
       -r /tmp/placenav-requirements.txt \
       -r /tmp/placenav-vpr-prepare.txt \
-      -r /tmp/placenav-waypoint.txt \
+      -r /tmp/placenav-waypoint.txt ocrd-fork-pylsd==0.0.8 \
       --extra-index-url https://download.pytorch.org/whl/cu118
 ENV SHELL /bin/bash
 RUN mkdir -p /home/user/ws/third_party /home/user/ws/src \

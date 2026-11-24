@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- 入力する圧縮画像のトピック -->
+  <arg name="image_topic" default="/usb_cam/image_raw/compressed"/>
+  <!-- パラメータファイル -->
+  <arg name="config" default="$(find road_edge_detector)/config/c2.yaml"/>
+  <!-- 何フレーム連続で検知したら「検知確定」とするか（既存 stop_line_detector の num_detection と同じ意味） -->
+  <arg name="num_detection" default="3"/>
+  <!-- デバッグ画像 /road_edge/debug_image/compressed を配信するか -->
+  <arg name="visualize" default="true"/>
+  <!-- 起動直後から検知するか（false なら /road_edge/enable に true が来るまで止めておく） -->
+  <arg name="start_enabled" default="true"/>
+  <!-- 判定したい道路端（config の targets）のノードの手前だけ配信するか（v0.3。false ならノード番号で絞らない） -->
+  <arg name="use_target_gate" default="true"/>
+
+  <!-- ノード名 road_edge → 配信トピックは /road_edge/detected などになる -->
+  <node pkg="road_edge_detector" type="road_edge_detector_node.py" name="road_edge" output="screen">
+    <rosparam command="load" file="$(arg config)"/>
+    <param name="image_topic" value="$(arg image_topic)"/>
+    <param name="detection_count_th" value="$(arg num_detection)"/>
+    <param name="visualize" value="$(arg visualize)"/>
+    <param name="start_enabled" value="$(arg start_enabled)"/>
+    <param name="use_target_gate" value="$(arg use_target_gate)"/>
+  </node>
+</launch>
