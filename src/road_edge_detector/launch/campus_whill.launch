@@ -1,0 +1,35 @@
+<launch>
+  <arg name="target_node" default=""/>
+  <arg name="target_before" default=""/>
+  <arg name="target_after" default=""/>
+  <arg name="use_target_gate" default="true"/>
+
+  <!-- Single entry point: start just one navigation stack and one stop node. -->
+  <arg name="topomap_dir"/>
+  <arg name="wp_model" default="omnivla_edge"/>
+  <arg name="pr_model" default="cosplace"/>
+  <arg name="remote_navigation" default="false"/>
+  <arg name="remote_role" default="waypoint"/>
+  <arg name="record" default="true"/>
+  <include file="$(find rwrc26_bringup)/launch/navigation.launch">
+    <arg name="drive_robot" value="true"/>
+    <arg name="robot_cmd_vel_topic" value="/campus_stop/input"/>
+    <arg name="topomap_dir" value="$(arg topomap_dir)"/>
+    <arg name="wp_model" value="$(arg wp_model)"/>
+    <arg name="pr_model" value="$(arg pr_model)"/>
+    <arg name="remote_navigation" value="$(arg remote_navigation)"/>
+    <arg name="remote_role" value="$(arg remote_role)"/>
+    <arg name="path_timeout" value="1.0"/>
+    <arg name="record" value="false"/>
+    <arg name="rviz" value="false"/>
+  </include>
+  <include file="$(find road_edge_detector)/launch/campus_stop.launch">
+    <arg name="target_node" value="$(arg target_node)"/>
+    <arg name="target_before" value="$(arg target_before)"/>
+    <arg name="target_after" value="$(arg target_after)"/>
+    <arg name="use_target_gate" value="$(arg use_target_gate)"/>
+    <arg name="input" value="/campus_stop/input"/>
+    <arg name="output" value="/local_path/cmd_vel"/>
+    <arg name="record" value="$(arg record)"/>
+  </include>
+</launch>
