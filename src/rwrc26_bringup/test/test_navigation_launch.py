@@ -132,11 +132,11 @@ class NavigationLaunchTest(unittest.TestCase):
                     '--model-config-path', 'models.yaml', '--topomap-base-dir', 'maps',
                     '--model-weight-dir', 'weights']
         for launch in [LAUNCH, ROOT/'launch/navigation_debug.launch']:
-            for mode in ['nearest', 'passage', 'arrival', 'arrival_turn', 'arrival_turn_step']:
+            for mode in ['nearest', 'passage', 'arrival', 'arrival_turn', 'arrival_turn_bend']:
                 for enabled in [False, True]:
                     with self.subTest(launch=launch.name, mode=mode, enabled=enabled):
                         options = ['subgoal_update:='+mode, 'local_pose_reset:='+str(enabled).lower()]
-                        if mode == 'arrival_turn':
+                        if mode == 'arrival_turn_bend':
                             options.extend(['turn_check_start_deg:=35', 'turn_required_ratio:=0.4'])
                         config = load_config_default([(str(launch), options)], 11311, verbose=False)
                         prefix = '/placenav_runner/'
@@ -146,7 +146,7 @@ class NavigationLaunchTest(unittest.TestCase):
                         with patch.object(sys, 'argv', ['navigate.py']+required+command[2:]):
                             args = parser.parse_args()
                         self.assertEqual(args.subgoal_update, mode)
-                        if mode == 'arrival_turn':
+                        if mode == 'arrival_turn_bend':
                             self.assertEqual(args.turn_check_start_deg, 35.)
                             self.assertEqual(args.turn_required_ratio, .4)
                         self.assertIs(args.local_pose, True)

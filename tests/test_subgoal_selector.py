@@ -46,7 +46,7 @@ class SelectorTest(unittest.TestCase):
             with self.subTest(direction=direction):
                 angles = [direction * a for a in [0, 20, 40, 60, 60, 60]]
                 self.make_map([0, 3, 6, 9, 12, 15], [math.radians(a) for a in angles])
-                sel = ProgressSubgoalSelector(self.motion, 5, mode='arrival_turn')
+                sel = ProgressSubgoalSelector(self.motion, 5, mode='arrival_turn_bend')
                 def step(stamp, node, yaw):
                     self.mass((3 * node, 1))
                     self.motion.last_odometry = OdomSample(
@@ -63,7 +63,7 @@ class SelectorTest(unittest.TestCase):
 
     def test_early_rotation_is_remembered_only_within_the_same_bend(self):
         self.make_map([0, 1, 2, 3, 4, 5], list(map(math.radians, [0, 20, 40, 60, 40, 20])))
-        sel = ProgressSubgoalSelector(self.motion, 5, mode='arrival_turn',
+        sel = ProgressSubgoalSelector(self.motion, 5, mode='arrival_turn_bend',
                                      turn_check_start_deg=20, turn_required_ratio=.5)
         def step(stamp, closest, yaw):
             self.mass((closest, 1))
@@ -80,7 +80,7 @@ class SelectorTest(unittest.TestCase):
         self.assertEqual(sel.peak_signed_turn, 0.)
 
     def test_turn_forward_recovery_exposes_one_goal(self):
-        sel = ProgressSubgoalSelector(self.motion, 4, mode='arrival_turn')
+        sel = ProgressSubgoalSelector(self.motion, 4, mode='arrival_turn_bend')
         self.mass((0, 1))
         sel.update(0, 1)
         self.mass((10.5, 1))
@@ -93,7 +93,7 @@ class SelectorTest(unittest.TestCase):
             with self.subTest(direction=direction):
                 angles = [0, 0, 20 * direction, 20 * direction, 20 * direction]
                 self.make_map([0, 3, 6, 9, 12], [math.radians(a) for a in angles])
-                sel = ProgressSubgoalSelector(self.motion, 4, mode='arrival_turn_step')
+                sel = ProgressSubgoalSelector(self.motion, 4, mode='arrival_turn')
                 def step(stamp, node, yaw):
                     self.mass((3 * node, 1))
                     self.motion.last_odometry = OdomSample(
@@ -108,7 +108,7 @@ class SelectorTest(unittest.TestCase):
                 self.assertEqual(step(6, 2, -169), (3, False))  # +12° across wrap.
 
     def test_step_turn_forward_recovery_uses_full_candidate(self):
-        sel = ProgressSubgoalSelector(self.motion, 4, mode='arrival_turn_step')
+        sel = ProgressSubgoalSelector(self.motion, 4, mode='arrival_turn')
         self.mass((0, 1))
         sel.update(0, 1)
         self.mass((10.5, 1))

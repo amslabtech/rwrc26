@@ -17,9 +17,9 @@ class ProgressSubgoalSelector:
                  final_tolerance=0.5, evaluation_config=None,
                  recovery_distance=4.0, recovery_threshold=0.8,
                  turn_check_start_deg=30., turn_required_ratio=0.25):
-        # arrival_turn shares all arrival behavior except the relative-yaw gate.
-        self.bend_turn = mode == 'arrival_turn'
-        self.turn_enabled = self.bend_turn or mode == 'arrival_turn_step'
+        # arrival_turn_bend shares all arrival behavior except the relative-yaw gate.
+        self.bend_turn = mode == 'arrival_turn_bend'
+        self.turn_enabled = self.bend_turn or mode == 'arrival_turn'
         self.turn_anchor = None
         if self.bend_turn:
             if not math.isfinite(turn_check_start_deg) or turn_check_start_deg <= 0:

@@ -95,8 +95,8 @@ def navigation_command(params):
         raise ValueError('local_pose_reset must be a YAML boolean')
     command.append('--local-pose-reset' if reset else '--no-local-pose-reset')
     update = str(params.get('subgoal_update', 'nearest'))
-    if update not in ('nearest', 'passage', 'arrival', 'arrival_turn', 'arrival_turn_step'):
-        raise ValueError('subgoal_update must be nearest, passage, arrival or arrival_turn/arrival_turn_step')
+    if update not in ('nearest', 'passage', 'arrival', 'arrival_turn', 'arrival_turn_bend'):
+        raise ValueError('subgoal_update must be nearest, passage, arrival or arrival_turn/arrival_turn_bend')
     if update != 'nearest' and (motion != 'odometry' or int(params.get('lookahead', 1)) != 1):
         raise ValueError('passage/arrival require odometry and lookahead=1')
     command += ['--subgoal-update', update]
@@ -107,7 +107,7 @@ def navigation_command(params):
         if not math.isfinite(value) or (value < 0 if name == 'final_goal_tolerance' else not 0 < value <= 1):
             raise ValueError('Invalid '+name)
         command += ['--'+name.replace('_', '-'), str(value)]
-    if update == 'arrival_turn':
+    if update == 'arrival_turn_bend':
         start = float(params.get('turn_check_start_deg', 30.))
         ratio = float(params.get('turn_required_ratio', .25))
         if not math.isfinite(start) or start <= 0 or not 0 < ratio <= 1:

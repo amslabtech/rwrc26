@@ -182,7 +182,7 @@ def parse_args():
                         help='Enable local XY anchors at goal switches and recovery (default)')
     resets.add_argument('--no-local-pose-reset', dest='local_pose_reset', action='store_false',
                         help='Keep local pose output but disable XY resets in every subgoal mode')
-    parser.add_argument('--subgoal-update', choices=['nearest', 'passage', 'arrival', 'arrival_turn', 'arrival_turn_step'], default='nearest',
+    parser.add_argument('--subgoal-update', choices=['nearest', 'passage', 'arrival', 'arrival_turn', 'arrival_turn_bend'], default='nearest',
                         help='Nearest+lookahead, retained passage, position arrival, or arrival with relative odometry turn')
     parser.add_argument('--turn-check-start-deg', type=positive_float, default=30.)
     parser.add_argument('--turn-required-ratio', type=probability, default=0.25)

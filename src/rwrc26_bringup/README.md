@@ -202,7 +202,7 @@ roslaunch rwrc26_bringup navigation_debug.launch \
 別の配置では`placenav_src`を実際の`navigate_whill.sh`があるディレクトリに変更する。
 実機・debugとも既定は`subgoal_update:=arrival local_pose:=true`。
 相対ゴールポーズのための通常到達時XY補正を使う構成としている。
-実験用の `subgoal_update:=arrival_turn` は、隣接ノード間で同じ向きに15°以上ずつ
+実験用の `subgoal_update:=arrival_turn_bend` は、隣接ノード間で同じ向きに15°以上ずつ
 方位が変わる区間を一つの角として扱う。最初の旋回ノードからの教示角が
 `turn_check_start_deg`（既定30°）に届くまでは通常の位置条件で次の画像を渡す。
 以降は、教示と同じ向きの実測旋回がこの角で一度でも
@@ -211,7 +211,7 @@ max(15°, 教示角 × `turn_required_ratio`) に達し、現在もその必要�
 通常到達には従来の位置条件も必要。前方救済は2回連続確認（既定）ごとに最大1ノード。
 後方救済・オドメトリの不連続で旋回の基準を取り直す。最終停止は通常のarrivalと共通。
 
-比較用の `subgoal_update:=arrival_turn_step` は初版（154c6ed）の判定を使う。直前の通常到達からの教示方位差が15°以上なら、位置条件に加え同方向に教示角の50%以上旋回したときに進む。角単位の回転持ち越しは行わず、前方救済の成立時は候補に直接移る。最終停止条件は共通。
+比較用の `subgoal_update:=arrival_turn` は初版（154c6ed）の判定を使う。直前の通常到達からの教示方位差が15°以上なら、位置条件に加え同方向に教示角の50%以上旋回したときに進む。角単位の回転持ち越しは行わず、前方救済の成立時は候補に直接移る。最終停止条件は共通。
 
 通常のXYリセットは`nearest`・`passage`・`arrival`共通で`local_pose_reset`を切り替えられる。
 各モードで`local_pose:=true`のままリセットをtrue/falseにして6パターンを比較できる。
