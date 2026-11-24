@@ -2,6 +2,8 @@
 
 ## PlaceNav 統合版
 
+学内の対象ノード・前後幅を指定した自律走行試験は [CAMPUS.md](CAMPUS.md) を参照。
+
 Parrot の navigation.launch に `road_edge:=true` を追加して起動する。地図の対象区間を設定する前の bag 確認には `road_edge_target_gate:=false` を指定する。対象区間設定後は `road_edge_config:=/path/to/c2.yaml` で切り替えられる。
 
 統合版は `/toponav/localization_diagnostics`（placenav_viz_msgs/LocalizationDiagnostics）を購読し、`msg.current_node_idx` を使う。以下は配布版の資料。整数トピックや整数を配信する評価ツールの記述は配布版に対応する。統合版のbagには親の診断トピックを記録する。

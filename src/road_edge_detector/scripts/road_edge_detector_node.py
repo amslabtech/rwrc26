@@ -30,6 +30,7 @@ C2 カメラの圧縮画像から、横断歩道へ進入する手前側の道�
   /road_edge/debug_image/compressed   sensor_msgs/CompressedImage
                                       visualize が true かつ購読者がいるとき。header は入力画像と同じ
 """
+import json
 import os
 import sys
 from placenav_viz_msgs.msg import LocalizationDiagnostics
@@ -67,6 +68,19 @@ class RoadEdgeDetectorNode(object):
             v = rospy.get_param("~" + k, None)
             if v is not None:
                 cfg[k] = v
+        target = rospy.get_param("~override_target_node", None)
+        if target is not None:
+            if target < 0:
+                raise ValueError("target_node must be nonnegative")
+            cfg["targets"] = [dict(name="node_%d" % target, node=target)]
+        for side in ("before", "after"):
+            width = rospy.get_param("~override_target_" + side, None)
+            if width is not None:
+                if width < 0:
+                    raise ValueError("target_" + side + " must be nonnegative")
+                cfg["target_" + side] = width
+                for entry in cfg["targets"]:
+                    entry[side] = width
         self.pipe = RoadEdgePipeline(cfg)
         self.detector = self.pipe.base_detector
         self.visualize = bool(rospy.get_param("~visualize", True))
@@ -95,6 +109,7 @@ class RoadEdgeDetectorNode(object):
         self.pub_pixel_y = rospy.Publisher("~pixel_y", Float32, queue_size=1)
         self.pub_norm_y = rospy.Publisher("~normalized_y", Float32, queue_size=1)
         self.pub_debug = rospy.Publisher("~debug_image/compressed", CompressedImage, queue_size=1)
+        self.pub_status = rospy.Publisher("~gate_status", String, queue_size=1)
         self.pub_target = rospy.Publisher("~target", String, queue_size=1)
         self.pub_target_passed = rospy.Publisher("~target_passed", Bool, queue_size=1)
         # 大きな画像を遅れなく受け取るため buff_size を大きくし、最新の 1 枚だけ処理する
@@ -170,6 +185,11 @@ class RoadEdgeDetectorNode(object):
         else:
             ny = py = NAN
 
+        current = gate.cur if gate is not None and node is not None else None
+        status = dict(current_node=node, gate_enabled=gate is not None,
+                      target=current["node"] if current else None,
+                      in_window=bool(current), raw=bool(res["found"]), detected=bool(confirmed))
+        self.pub_status.publish(String(data=json.dumps(status)))
         self.pub_detected.publish(Bool(data=confirmed))
         self.pub_detected_raw.publish(Bool(data=bool(res["found"])))
         self.pub_pixel_y.publish(Float32(data=py))

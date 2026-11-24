@@ -1,0 +1,29 @@
+<launch>
+  <arg name="target_node" default=""/>
+  <arg name="target_before" default=""/>
+  <arg name="target_after" default=""/>
+  <arg name="use_target_gate" default="true"/>
+
+  <arg name="image_topic" default="/usb_cam/image_raw/compressed"/>
+  <arg name="input" default="/campus_stop/input"/>
+  <arg name="output" default="/campus_stop/output"/>
+  <arg name="odom" default="/odom"/>
+  <arg name="record" default="false"/>
+  <arg name="bag_prefix" default="$(env HOME)/campus_stop"/>
+  <arg name="visualize" default="true"/>
+  <arg name="distinct_topics" value="$(eval {True: True}[arg('input') != arg('output')])"/>
+  <include file="$(find road_edge_detector)/launch/road_edge_detector.launch">
+    <arg name="image_topic" value="$(arg image_topic)"/>
+    <arg name="target_node" value="$(arg target_node)"/>
+    <arg name="target_before" value="$(arg target_before)"/>
+    <arg name="target_after" value="$(arg target_after)"/>
+    <arg name="use_target_gate" value="$(arg use_target_gate)"/>
+    <arg name="visualize" value="$(arg visualize)"/>
+  </include>
+  <node pkg="rwrc26_bringup" type="road_edge_stop.py" name="road_edge_stop" required="true" output="screen">
+    <remap from="~input" to="$(arg input)"/>
+    <remap from="~output" to="$(arg output)"/>
+  </node>
+  <node if="$(arg record)" pkg="rosbag" type="record" name="campus_stop_recorder"
+        args="-o $(arg bag_prefix) $(arg image_topic) $(arg input) $(arg output) $(arg odom) /road_edge/detected /road_edge/normalized_y /road_edge/target /road_edge/target_passed /road_edge/detected_raw /road_edge/gate_status /toponav/localization_diagnostics"/>
+</launch>

@@ -1,5 +1,9 @@
 <?xml version="1.0"?>
 <launch>
+  <arg name="target_node" default=""/>
+  <arg name="target_before" default=""/>
+  <arg name="target_after" default=""/>
+
   <!-- 入力する圧縮画像のトピック -->
   <arg name="image_topic" default="/usb_cam/image_raw/compressed"/>
   <!-- パラメータファイル -->
@@ -16,6 +20,9 @@
   <!-- ノード名 road_edge → 配信トピックは /road_edge/detected などになる -->
   <node pkg="road_edge_detector" type="road_edge_detector_node.py" name="road_edge" output="screen">
     <rosparam command="load" file="$(arg config)"/>
+    <param if="$(eval arg('target_node') != '')" name="override_target_node" type="int" value="$(arg target_node)"/>
+    <param if="$(eval arg('target_before') != '')" name="override_target_before" type="int" value="$(arg target_before)"/>
+    <param if="$(eval arg('target_after') != '')" name="override_target_after" type="int" value="$(arg target_after)"/>
     <param name="image_topic" value="$(arg image_topic)"/>
     <param name="detection_count_th" value="$(arg num_detection)"/>
     <param name="visualize" value="$(arg visualize)"/>
