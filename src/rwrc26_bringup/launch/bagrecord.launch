@@ -1,0 +1,42 @@
+<launch>
+  <arg name="bag_dir" default="/home/user/ws/src/PlaceNav/bag"/>
+  <!-- rosbag record -o: bag_dir must exist; files are named <bag_prefix>_YYYY-MM-DD-HH-MM-SS.bag. -->
+  <arg name="bag_prefix" default="navigation"/>
+  <arg name="bag_buffer_mb" default="512"/>
+  <!-- Navigation and retained-path diagnostics. Some depend on the installed PlaceNav version;
+       rosbag also subscribes to topics that are not currently published. -->
+  <arg name="record_topics" default="
+    /usb_cam/image_raw/compressed
+    /usb_cam/camera_info
+    /odom
+    /tf
+    /tf_static
+    /c2/depth/points
+    /c2/depth/diagnostics
+    /toponav/localization_diagnostics
+    /toponav/goal_evaluation
+    /toponav/local_goal_pose
+    /toponav/viz_info
+    /toponav/reached_goal
+    /placenav/gnm_path
+    /placenav_teb_bridge/local_costmap/costmap
+    /placenav_teb_bridge/local_costmap/footprint
+    /placenav_teb_bridge/TebLocalPlannerROS/global_plan
+    /placenav_teb_bridge/TebLocalPlannerROS/local_plan
+    /placenav_teb_bridge/TebLocalPlannerROS/teb_poses
+    /placenav_teb_bridge/TebLocalPlannerROS/teb_markers
+    /placenav_teb_bridge/navigation_state
+    /local_path/cmd_vel
+    /whill/controller/cmd_vel
+    /realsense/color/image_raw/compressed
+    /realsense/color/camera_info
+    /placenav_teb_bridge/control_status
+    /realsense/depth/camera_info
+    /realsense/depth/image_rect_raw/compressedDepth
+    /placenav_teb_bridge/retained_safe_path
+    /placenav_teb_bridge/diagnostics"/>
+
+  <node pkg="rosbag" type="record" name="session_recorder" output="screen"
+        required="true"
+        args="-o $(arg bag_dir)/$(arg bag_prefix) --lz4 --buffsize $(arg bag_buffer_mb) $(arg record_topics)"/>
+</launch>
