@@ -19,6 +19,8 @@
   <arg name="pass_local_mass" default=""/>
   <arg name="goal_recovery_distance" default=""/>
   <arg name="goal_recovery_threshold" default=""/>
+  <arg name="turn_check_start_deg" default=""/>
+  <arg name="turn_required_ratio" default=""/>
   <arg name="final_goal_tolerance" default=""/>
   <arg name="goal_eval_position_tolerance" default=""/>
   <arg name="goal_eval_yaw_tolerance" default=""/>
@@ -58,6 +60,8 @@
     <arg name="pass_local_mass" value="$(arg pass_local_mass)"/>
     <arg name="goal_recovery_distance" value="$(arg goal_recovery_distance)"/>
     <arg name="goal_recovery_threshold" value="$(arg goal_recovery_threshold)"/>
+    <arg name="turn_check_start_deg" value="$(arg turn_check_start_deg)"/>
+    <arg name="turn_required_ratio" value="$(arg turn_required_ratio)"/>
     <arg name="final_goal_tolerance" value="$(arg final_goal_tolerance)"/>
     <arg name="goal_eval_position_tolerance" value="$(arg goal_eval_position_tolerance)"/>
     <arg name="goal_eval_yaw_tolerance" value="$(arg goal_eval_yaw_tolerance)"/>

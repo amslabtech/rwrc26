@@ -498,7 +498,7 @@ class PlaceNavNode:
             if self.local_pose_tracker is not None and self.local_pose_tracker.mean is not None:
                 self.local_pose_tracker.invalidate('ODOMETRY_DISCONTINUITY')
             if self.goal_selector is not None:
-                self.goal_selector.reset_confirmation()
+                self.goal_selector.clear_odometry_reference()
             self._last_odom_epoch = epoch
         return sample
 
@@ -665,7 +665,8 @@ class PlaceNavNode:
                 final_tolerance=args.final_goal_tolerance,
                 evaluation_config=self.goal_evaluation_config,
                 recovery_distance=args.goal_recovery_distance,
-                recovery_threshold=args.goal_recovery_threshold)
+                recovery_threshold=args.goal_recovery_threshold,
+                turn_check_start_deg=args.turn_check_start_deg, turn_required_ratio=args.turn_required_ratio)
             if self.local_pose_enabled:
                 from placenav.local_pose import LocalPoseConfig, LocalPoseTracker
                 self.local_pose_tracker = LocalPoseTracker(

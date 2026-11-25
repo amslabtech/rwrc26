@@ -6,11 +6,39 @@ import numpy as np
 from placenav.goal_evaluation import GoalEvaluationConfig, evaluate_goal, node_position_score
 
 
+# A 15-degree teaching interval is also the minimum observed turn and the
+# allowed angular shortfall after qualifying earlier in this bend.
+TURN_STEP_RAD = math.radians(15)
+
+
 class ProgressSubgoalSelector:
     def __init__(self, motion, final_node, mode='nearest', lookahead=1,
                  threshold=0.5, confirmations=2, min_local_mass=0.8,
                  final_tolerance=0.5, evaluation_config=None,
-                 recovery_distance=4.0, recovery_threshold=0.8):
+                 recovery_distance=4.0, recovery_threshold=0.8,
+                 turn_check_start_deg=30., turn_required_ratio=0.25):
+        # arrival_turn_bend shares all arrival behavior except the relative-yaw gate.
+        self.bend_turn = mode == 'arrival_turn_bend'
+        self.turn_enabled = self.bend_turn or mode == 'arrival_turn'
+        self.turn_anchor = None
+        if self.bend_turn:
+            if not math.isfinite(turn_check_start_deg) or turn_check_start_deg <= 0:
+                raise ValueError('turn_check_start_deg must be positive')
+            if not 0 < turn_required_ratio <= 1:
+                raise ValueError('turn_required_ratio must be in (0, 1]')
+            self.turn_check_start = math.radians(turn_check_start_deg)
+            self.turn_required_ratio = turn_required_ratio
+            self.map_yaw = np.unwrap(motion.node_yaw)
+            changes = np.diff(self.map_yaw, prepend=self.map_yaw[0])
+            direction = np.where(np.abs(changes) >= TURN_STEP_RAD, np.sign(changes), 0)
+            self.turn_entry = []
+            for node, sign in enumerate(direction):
+                entry = self.turn_entry[-1] if node and sign and sign == direction[node-1] else node
+                self.turn_entry.append(entry)
+        if self.turn_enabled:
+            mode = 'arrival'
+        self.previous_yaw = None
+        self.turn_yaw = 0.
         if mode not in ('nearest', 'passage', 'arrival'):
             raise ValueError('Unknown subgoal update mode')
         if mode != 'nearest' and lookahead != 1:
@@ -44,6 +72,58 @@ class ProgressSubgoalSelector:
         self.decision_goal_idx = -1
         self.decision_score = 0.
 
+    def clear_odometry_reference(self):
+        self.turn_anchor = None
+        self.previous_yaw = None
+        self.turn_yaw = 0.
+        self.reset_confirmation()
+
+    def _observe_yaw(self):
+        sample = self.motion.last_odometry
+        if sample is None:
+            return
+        yaw = sample.pose[2]
+        if self.previous_yaw is not None:
+            delta = yaw - self.previous_yaw
+            self.turn_yaw += math.atan2(math.sin(delta), math.cos(delta))
+        self.previous_yaw = yaw
+
+    def _set_turn_anchor(self, node):
+        if self.turn_enabled and not self.bend_turn:
+            if self.motion.last_odometry is not None:
+                self.turn_anchor = (node, self.motion.last_odometry.pose[2])
+            return
+        if not self.bend_turn or self.previous_yaw is None:
+            return
+        if self.turn_anchor is None or self.turn_entry[node] != self.turn_entry[self.turn_anchor[0]]:
+            self.turn_anchor = (node, self.turn_yaw)
+            self.peak_signed_turn = 0.
+
+    def _turn_satisfied(self):
+        if self.turn_anchor is None:
+            return True
+        node, start_yaw = self.turn_anchor
+        if not self.bend_turn:
+            delta = self.motion.node_yaw[self.subgoal] - self.motion.node_yaw[node]
+            taught = math.atan2(math.sin(delta), math.cos(delta))
+            if abs(taught) < math.radians(15):
+                return True
+            sample = self.motion.last_odometry
+            if sample is None:
+                return False
+            delta = sample.pose[2] - start_yaw
+            measured = math.atan2(math.sin(delta), math.cos(delta))
+            return math.copysign(1., taught) * measured >= 0.5 * abs(taught)
+        if self.turn_entry[node] != self.turn_entry[self.subgoal]:
+            return True
+        taught = self.map_yaw[self.subgoal] - self.map_yaw[node]
+        measured = math.copysign(1., taught) * (self.turn_yaw - start_yaw)
+        self.peak_signed_turn = max(self.peak_signed_turn, measured)
+        if abs(taught) < self.turn_check_start:
+            return True
+        required = max(TURN_STEP_RAD, self.turn_required_ratio * abs(taught))
+        return self.peak_signed_turn >= required and measured >= required - TURN_STEP_RAD
+
     def reset_confirmation(self):
         self.count = 0
         self.recovery_count = 0
@@ -53,8 +133,10 @@ class ProgressSubgoalSelector:
         if self.reached or stamp_ns == self.last_stamp:
             return self.subgoal, self.reached
         if self.last_stamp is not None and stamp_ns < self.last_stamp:
-            self.reset_confirmation()
+            self.clear_odometry_reference()
         self.last_stamp = stamp_ns
+        if self.bend_turn:
+            self._observe_yaw()
         initial = self.subgoal is None
         if initial or self.mode == 'nearest':
             candidate = min(closest_node + self.lookahead, self.final_node)
@@ -88,12 +170,16 @@ class ProgressSubgoalSelector:
         if self.mode == 'nearest' and not is_final:
             self.status = 'NEAREST'
             return self.subgoal, False
+        turn_ok = is_final or not self.turn_enabled or self._turn_satisfied()
         if metrics['neighborhood_mass'] < self.min_local_mass:
             self.count = 0
             self.status = 'REMOTE_BELIEF'
         elif self.decision_score < self.threshold:
             self.count = 0
             self.status = 'WAITING'
+        elif not turn_ok:
+            self.count = 0
+            self.status = 'WAITING_TURN'
         else:
             self.count += 1
             self.status = 'CONFIRMING'
@@ -107,6 +193,7 @@ class ProgressSubgoalSelector:
                     self.reached = True
                     self.status = 'GOAL_REACHED'
                 else:
+                    self._set_turn_anchor(self.subgoal)
                     self.subgoal += 1
                     self.status = 'ADVANCED_ARRIVAL' if self.mode == 'arrival' else 'ADVANCED_PASSAGE'
                 return self.subgoal, self.reached
@@ -115,7 +202,7 @@ class ProgressSubgoalSelector:
         # A goal can be ahead by a normal image spacing, but should not remain
         # behind a passed neighborhood. All distances are physical route meters.
         candidate = min(closest_node + self.lookahead, self.final_node)
-        direction = ('FORWARD' if candidate > self.subgoal and forward >= self.recovery_threshold
+        direction = ('FORWARD' if turn_ok and candidate > self.subgoal and forward >= self.recovery_threshold
                      else 'BACKWARD' if candidate < self.subgoal and backward >= self.recovery_threshold
                      else None)
         position = self.motion.node_s[closest_node]
@@ -131,7 +218,13 @@ class ProgressSubgoalSelector:
         self.recovery_count += 1
         self.status = 'RECOVERY_PENDING_' + direction
         if self.recovery_count >= self.confirmations:
-            self.subgoal = candidate
+            if self.bend_turn and direction == 'FORWARD':
+                # Keep the turn reference and expose one new goal per recovery.
+                self._set_turn_anchor(self.subgoal)
+                self.subgoal += 1
+            else:
+                self.subgoal = candidate
+                self.turn_anchor = None  # Backward recovery starts a new approach.
             self.reset_confirmation()
             self.status = 'RECOVERED_' + direction
         # Recovery is not an arrival observation and cannot terminate navigation.

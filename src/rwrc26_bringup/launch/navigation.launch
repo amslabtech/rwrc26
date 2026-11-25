@@ -30,6 +30,8 @@
   <arg name="pass_local_mass" default=""/>
   <arg name="goal_recovery_distance" default=""/>
   <arg name="goal_recovery_threshold" default=""/>
+  <arg name="turn_check_start_deg" default=""/>
+  <arg name="turn_required_ratio" default=""/>
   <arg name="final_goal_tolerance" default=""/>
   <arg name="goal_eval_position_tolerance" default=""/>
   <!-- Legacy command-line angle override is still in radians. YAML uses degrees. -->
@@ -124,6 +126,7 @@
   <arg name="rviz" default="true"/>
   <arg name="use_sim_time" default="false"/>
   <param name="use_sim_time" value="$(arg use_sim_time)" type="bool"/>
+  <param name="/gnm_path_adapter/waypoint_x_offset" value="0.62152" type="double"/>
 
   <include file="$(find unidepth_ros)/launch/c2_unidepth.launch">
     <arg name="image_topic" value="$(arg image_topic)"/>
@@ -197,6 +200,8 @@
     <param if="$(eval arg('pass_local_mass') != '')" name="pass_local_mass" value="$(arg pass_local_mass)" type="double"/>
     <param if="$(eval arg('goal_recovery_distance') != '')" name="goal_recovery_distance" value="$(arg goal_recovery_distance)" type="double"/>
     <param if="$(eval arg('goal_recovery_threshold') != '')" name="goal_recovery_threshold" value="$(arg goal_recovery_threshold)" type="double"/>
+    <param if="$(eval arg('turn_check_start_deg') != '')" name="turn_check_start_deg" value="$(arg turn_check_start_deg)" type="double"/>
+    <param if="$(eval arg('turn_required_ratio') != '')" name="turn_required_ratio" value="$(arg turn_required_ratio)" type="double"/>
     <param if="$(eval arg('final_goal_tolerance') != '')" name="final_goal_tolerance" value="$(arg final_goal_tolerance)" type="double"/>
     <param if="$(eval arg('goal_eval_position_tolerance') != '')" name="goal_eval_position_tolerance" value="$(arg goal_eval_position_tolerance)" type="double"/>
     <param if="$(eval arg('goal_eval_yaw_tolerance') != '')" name="goal_eval_yaw_tolerance" value="$(arg goal_eval_yaw_tolerance)" type="double"/>

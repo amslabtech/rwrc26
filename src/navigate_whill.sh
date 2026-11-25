@@ -31,7 +31,7 @@ usage()
       '  --pr-model cosplace|megaloc|salad|anyloc (default: cosplace)' \
       '  --wp-model gnm_large|vint|nomad|omnivla_edge (default: gnm_large)' \
       '  --motion-model legacy|odometry (default: odometry; requires node_odometry.json)' \
-      '  --subgoal-update nearest|passage|arrival (default: nearest)' \
+      '  --subgoal-update nearest|passage|arrival|arrival_turn|arrival_turn_bend (default: nearest)' \
       '  --local-pose (publish relative goal pose; off by default in standalone CLI)' \
       '  --local-pose-reset | --no-local-pose-reset (XY resets; default: enabled)' \
       '  --wp-goal-pose (experimental, omnivla_edge + --local-pose: also feed the relative subgoal pose)' \
