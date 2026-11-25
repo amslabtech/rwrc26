@@ -49,8 +49,11 @@ def local_poses(
     stamp: rospy.Time,
     frame_id: str,
     include_origin: bool,
+    x_offset: float = 0.0,
 ) -> List[PoseStamped]:
-    points = [(point.x, point.y) for point in waypoints]
+    # Model waypoints are relative to the camera; x_offset moves them from the
+    # camera to frame_id. The inserted origin stays at frame_id (the robot).
+    points = [(point.x + x_offset, point.y) for point in waypoints]
     if include_origin:
         points.insert(0, (0.0, 0.0))
 
@@ -75,6 +78,7 @@ class GnmPathAdapter:
         self.target_frame = rospy.get_param("~target_frame", "odom")
         self.include_origin = rospy.get_param("~include_origin", True)
         self.expected_waypoints = rospy.get_param("~expected_waypoints", 5)
+        self.waypoint_x_offset = float(rospy.get_param("~waypoint_x_offset", 0.0))
         self.transform_timeout = rospy.Duration(
             rospy.get_param("~transform_timeout", 0.2)
         )
@@ -87,9 +91,10 @@ class GnmPathAdapter:
         )
 
         rospy.loginfo(
-            "GNM path adapter: %s (%s) -> %s (%s)",
+            "GNM path adapter: %s (%s, waypoint x offset %.3f m) -> %s (%s)",
             self.input_topic,
             self.source_frame,
+            self.waypoint_x_offset,
             self.output_topic,
             self.target_frame,
         )
@@ -138,6 +143,7 @@ class GnmPathAdapter:
                 message.query_timestamp,
                 self.source_frame,
                 self.include_origin,
+                self.waypoint_x_offset,
             )
         ]
         for pose in path.poses:

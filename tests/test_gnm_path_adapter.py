@@ -24,6 +24,18 @@ class WaypointYawsTest(unittest.TestCase):
             self.assertEqual(len(poses), count + 1)
             self.assertAlmostEqual(poses[-1].pose.position.x, count * 0.1)
 
+    def test_x_offset_moves_waypoints_but_not_origin(self):
+        points = np.zeros((2, 2))
+        points[:, 0] = [0.5, 1.0]
+        points[:, 1] = [0.0, 0.2]
+        messages = waypoints_to_ros_msg(points)
+        poses = local_poses(messages, rospy.Time(12), "base_link", True, 0.62)
+        self.assertEqual(len(poses), 3)
+        self.assertAlmostEqual(poses[0].pose.position.x, 0.0)
+        self.assertAlmostEqual(poses[1].pose.position.x, 1.12)
+        self.assertAlmostEqual(poses[2].pose.position.x, 1.62)
+        self.assertAlmostEqual(poses[2].pose.position.y, 0.2)
+
     def test_empty_path(self):
         self.assertEqual(waypoint_yaws([]), [])
 

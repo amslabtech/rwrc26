@@ -126,6 +126,7 @@
   <arg name="rviz" default="true"/>
   <arg name="use_sim_time" default="false"/>
   <param name="use_sim_time" value="$(arg use_sim_time)" type="bool"/>
+  <param name="/gnm_path_adapter/waypoint_x_offset" value="0.62152" type="double"/>
 
   <include file="$(find unidepth_ros)/launch/c2_unidepth.launch">
     <arg name="image_topic" value="$(arg image_topic)"/>
