@@ -3,6 +3,7 @@
   <arg name="target_before" default=""/>
   <arg name="target_after" default=""/>
   <arg name="use_target_gate" default="true"/>
+  <arg name="once_per_target" default="false"/>
 
   <!-- Single entry point: start just one navigation stack and one stop node. -->
   <arg name="topomap_dir"/>
@@ -28,6 +29,7 @@
     <arg name="target_before" value="$(arg target_before)"/>
     <arg name="target_after" value="$(arg target_after)"/>
     <arg name="use_target_gate" value="$(arg use_target_gate)"/>
+    <arg name="once_per_target" value="$(arg once_per_target)"/>
     <arg name="input" value="/campus_stop/input"/>
     <arg name="output" value="/local_path/cmd_vel"/>
     <arg name="record" value="$(arg record)"/>

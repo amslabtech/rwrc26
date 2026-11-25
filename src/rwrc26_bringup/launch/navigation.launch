@@ -5,6 +5,7 @@
   <arg name="road_edge" default="$(arg road_edge_stop)"/>
   <arg name="valid_road_edge_stop" value="$(eval {True: True}[not arg('road_edge_stop') or arg('road_edge')])"/>
   <arg name="road_edge_target_gate" default="true"/>
+  <arg name="once_per_target" default="false"/>
   <arg name="road_edge_config" default="$(find road_edge_detector)/config/c2.yaml" if="$(arg road_edge)"/>
   <include if="$(arg road_edge)" file="$(find road_edge_detector)/launch/road_edge_detector.launch">
     <arg name="image_topic" value="$(arg image_topic)/compressed"/>
@@ -96,6 +97,7 @@
   <arg name="cmd_vel_topic" value="$(eval arg('robot_cmd_vel_topic') if arg('drive_robot') else '/fusion_validation/cmd_vel')"/>
   <arg name="planner_cmd_vel_topic" value="$(eval '/road_edge_stop/input' if arg('road_edge_stop') else arg('cmd_vel_topic'))"/>
   <node if="$(arg road_edge_stop)" pkg="rwrc26_bringup" type="road_edge_stop.py" name="road_edge_stop" required="true">
+    <param name="once_per_target" type="bool" value="$(eval arg('once_per_target') and arg('road_edge_target_gate'))"/>
     <remap from="~output" to="$(arg cmd_vel_topic)"/>
   </node>
   <arg name="fusion_mode" default="layers"/>

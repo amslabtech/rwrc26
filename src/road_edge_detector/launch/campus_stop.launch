@@ -3,6 +3,7 @@
   <arg name="target_before" default=""/>
   <arg name="target_after" default=""/>
   <arg name="use_target_gate" default="true"/>
+  <arg name="once_per_target" default="false"/>
 
   <arg name="image_topic" default="/usb_cam/image_raw/compressed"/>
   <arg name="input" default="/campus_stop/input"/>
@@ -21,6 +22,7 @@
     <arg name="visualize" value="$(arg visualize)"/>
   </include>
   <node pkg="rwrc26_bringup" type="road_edge_stop.py" name="road_edge_stop" required="true" output="screen">
+    <param name="once_per_target" type="bool" value="$(eval arg('once_per_target') and arg('use_target_gate'))"/>
     <remap from="~input" to="$(arg input)"/>
     <remap from="~output" to="$(arg output)"/>
   </node>

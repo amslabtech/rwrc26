@@ -9,4 +9,10 @@ WHILLドライバ、MotionDecision、C2、ナビが使う深度サーバーを�
 
 current_node は推定現在ノード、in_window は有効な対象区間、raw は画像単体の検知候補、detected は区間と連続画像などを含めた最終判定。target は有効な対象の番号。現在ノード未受信・期限切れは current_node:null。位置推定の欠落中は道路端による停止を判定できない。gate_status は画像処理時に配信され、record:=true（既定）でbagにも入る。
 
-確定するとTEBの出力を遮断しゼロを保持。検知が消えた後 rosservice call /road_edge_stop/reset で手動解除。停止後に機体前端から道路端までの距離を実測する。単独bag再生用は campus_stop.launch（既定の速度出力は /campus_stop/output）。診断トピックと圧縮画像を再生する。依存は配布元README参照。
+確定するとゼロ指令を保持する。既定の `once_per_target:=false` では検知が消えた後に手動解除し、同じ対象でも再検知すれば停止する。`once_per_target:=true` と対象ゲートを併用すると、同じ対象を検知中でも手動解除でき、解除済みの対象は停止ノードの再起動まで再停止しない。別の対象は初回検知で停止する。解除は `rosservice call /road_edge_stop/reset`。対象ゲート無効時は従来方式を使う。
+
+つくばのE01〜E14で、既存ナビの速度出力が /campus_stop/input の場合の停止ノード起動例。
+
+    roslaunch road_edge_detector campus_stop.launch use_target_gate:=true once_per_target:=true input:=/campus_stop/input output:=/local_path/cmd_vel record:=true
+
+停止後に機体前端から道路端までの距離を実測する。単独bag再生用は campus_stop.launch（既定の速度出力は /campus_stop/output）。診断トピックと圧縮画像を再生する。依存は配布元README参照。

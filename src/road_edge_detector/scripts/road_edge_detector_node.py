@@ -152,6 +152,9 @@ class RoadEdgeDetectorNode(object):
 
     def callback(self, msg):
         if not self.enabled:            # 停止中は画像を処理せず「検知なし」だけ配信する
+            self.pub_status.publish(String(data=json.dumps(dict(
+                current_node=None, gate_enabled=self.gate is not None, target=None,
+                in_window=False, raw=False, detected=False))))
             self.pub_detected.publish(Bool(data=False))
             self.pub_detected_raw.publish(Bool(data=False))
             self.pub_pixel_y.publish(Float32(data=NAN))
