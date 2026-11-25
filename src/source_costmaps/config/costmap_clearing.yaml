@@ -120,10 +120,10 @@ local_costmap:
       marking: false
       clearing: true
       model_type: 0 # depth camera frustum
-      # 70 x 55 deg; range 0.52-0.98 m inside gate 0.5-1.0 m (axis z 0.51-0.73)
+      # 70 x 55 deg; range 0.31-0.98 m inside gate 0.3-1.0 m (axis z 0.31-0.73)
       horizontal_fov_angle: 1.222
       vertical_fov_angle: 0.96
-      min_z: 0.7
+      min_z: 0.42
       max_z: 1.0
       # t_clear = 1.5 s with voxel_decay 30.0
       decay_acceleration: 50.7
