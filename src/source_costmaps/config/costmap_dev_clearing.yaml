@@ -59,7 +59,7 @@ local_costmap:
       topic: /obstacles/d435/points
       # Points are in odom; ranging origin must remain the physical camera.
       sensor_frame: realsense_color_optical_frame
-      obstacle_range: 1.0 # 3.0
+      obstacle_range: 3.0 # 3.0
       marking: true
       clearing: false
       expected_update_rate: 0.5 # 0.5
@@ -105,7 +105,7 @@ local_costmap:
       data_type: PointCloud2
       topic: /obstacles/unik3d/points
       sensor_frame: c2_camera_optical_frame
-      obstacle_range: 1.0 # 6.0
+      obstacle_range: 3.0 # 6.0
       marking: true
       clearing: false
       expected_update_rate: 1.0 # 1.0
