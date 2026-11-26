@@ -230,6 +230,7 @@ waypointの代わりに「現在位置で目標方位へ向く」2点のPathをT
 （無ければ初回に自動取得）。`placenav_viz_msgs`の再ビルドも必要。
 処理時間の計測：`python3 scripts/benchmark_heading_align.py --topomap-dir src/topomaps/images/<route> --hfov 140`
 （解像度・特徴点数ごとの1回の測定時間と精度。結果に合わせて`heading_align_resize`・`heading_align_max_keypoints`を選ぶ）。
+記録した走行で測る場合は `--bag <その経路のナビゲーションbag>` を足す：各カメラ画像をその時点のサブゴール（`/toponav/goal_evaluation`）と組にして、走行中と同じ組で処理時間・成功率・|dpsi|の分布を出す。`/toponav`の無いbagは `--toponav-bag` に同じ画像のPlaceNav出力（オフライン再生のnav_run.bagなど）を渡す。
 結合確認：`python3 tests/check_heading_align_ros.py`。
 
 通常のXYリセットは`nearest`・`passage`・`arrival`共通で`local_pose_reset`を切り替えられる。
