@@ -154,13 +154,23 @@ class GnmPathAdapter:
                 message.header.frame_id, self.target_frame,
             )
             return
+        # Rotate (or hold) where the robot is now: the message carries its pose at image
+        # time, and TEB would drive back to that position (the robot moves on meanwhile).
+        x, y, yaw = message.robot.x, message.robot.y, message.robot.theta
+        stamp = rospy.Time.now()
+        try:
+            transform = self.tf_buffer.lookup_transform(self.target_frame, self.source_frame, rospy.Time(0))
+            t, q = transform.transform.translation, transform.transform.rotation
+            x, y = t.x, t.y
+            yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+            stamp = transform.header.stamp
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as error:
+            rospy.logwarn_throttle(2.0, "No current robot pose for heading alignment (%s); using the image pose", error)
+            stamp = message.header.stamp
         path = Path()
-        path.header.stamp = message.header.stamp
+        path.header.stamp = stamp
         path.header.frame_id = self.target_frame
-        path.poses = rotation_poses(
-            message.robot.x, message.robot.y, message.robot.theta, message.target_yaw,
-            message.header.stamp, self.target_frame,
-        )
+        path.poses = rotation_poses(x, y, yaw, message.target_yaw, stamp, self.target_frame)
         self.path_publisher.publish(path)
 
     def viz_callback(self, message: Viz):

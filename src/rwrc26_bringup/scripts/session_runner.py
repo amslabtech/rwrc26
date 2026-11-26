@@ -126,6 +126,11 @@ def navigation_command(params):
                 if not math.isfinite(value) or not 0 < value < 180:
                     raise ValueError('Invalid '+name)
                 command += ['--'+name.replace('_', '-'), str(value)]
+        if 'heading_align_approach_distance' in params:
+            value = float(params['heading_align_approach_distance'])
+            if not math.isfinite(value) or value < 0:
+                raise ValueError('Invalid heading_align_approach_distance')
+            command += ['--heading-align-approach-distance', str(value)]
         for name in ('heading_align_resize', 'heading_align_max_keypoints'):
             if name in params:
                 if type(params[name]) is not int or params[name] <= 0:

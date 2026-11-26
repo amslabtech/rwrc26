@@ -176,7 +176,8 @@ class NavigationLaunchTest(unittest.TestCase):
             with self.subTest(launch=launch.name, enabled=True):
                 config = load_config_default([(str(launch), [
                     'heading_align:=true', 'heading_align_start_deg:=30', 'heading_align_done_deg:=12',
-                    'heading_align_resize:=800', 'heading_align_max_keypoints:=512'])], 11311, verbose=False)
+                    'heading_align_resize:=800', 'heading_align_max_keypoints:=512',
+                    'heading_align_approach_distance:=1.5'])], 11311, verbose=False)
                 params = {k[len(prefix):]:p.value for k,p in config.params.items() if k.startswith(prefix)}
                 params['placenav_src'] = str(ROOT.parent)
                 command, _ = runner.navigation_command(params)
@@ -184,7 +185,8 @@ class NavigationLaunchTest(unittest.TestCase):
                     args = parser.parse_args()
                 self.assertIs(args.heading_align, True)
                 self.assertEqual((args.heading_align_start_deg, args.heading_align_done_deg,
-                                  args.heading_align_resize, args.heading_align_max_keypoints), (30., 12., 800, 512))
+                                  args.heading_align_resize, args.heading_align_max_keypoints,
+                                  args.heading_align_approach_distance), (30., 12., 800, 512, 1.5))
                 with self.assertRaises(ValueError):
                     runner.navigation_command(dict(params, subgoal_update='passage'))
                 # The Xavier waypoint role gets the same flags and ignores them.

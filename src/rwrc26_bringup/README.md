@@ -216,14 +216,17 @@ max(15°, 教示角 × `turn_required_ratio`) に達し、現在もその必要�
 実験用の `heading_align:=true`（既定false、arrival系の`subgoal_update`が必要）は、角でOmniVLA-edgeが大きく回れない・
 逆へ曲がる問題への対策。サブゴールkに位置で到達したとき、現在画像とノードk画像の向きの差dpsiを
 SuperPoint+LightGlue（等距離魚眼・回転のみRANSAC、`placenav/rotation_estimation.py`）で測り、
-|dpsi|が`heading_align_start_deg`（既定25°）以下ならそのまま次へ進む。超えたらその場で回転し、
-`heading_align_done_deg`（既定15°、TEBの`yaw_goal_tolerance` 0.2 radより大きくする）以下になってから進む。
+|dpsi|が`heading_align_start_deg`（既定20°）以下ならそのまま次へ進む。超えたらその場で回転し、
+`heading_align_done_deg`（既定13°、TEBの`yaw_goal_tolerance` 0.2 rad=11.5°より大きくする）以下になってから進む。
 回転は地図作成時に曲がった場所（ノード位置）で行うので角を突っ切らず、角の密集ノードは一つずつ踏み石になる。
-蓄積したオドメトリ方位は使わず、オドメトリは1回の回転の間だけ測定値を保持するのに使う。
-画像で測れないときは停止して待ち（`--heading-align-fallback-after`、既定5フレーム）、
+サブゴールの手前`heading_align_approach_distance`（既定2 m）以内では0.5 sごとにも測る。測れた最新の値（アンカー）は、
+到達時や回転中に画像が測れないとき（屋内の角で白壁に正対するなど）に
+「アンカーのdpsi＋その後のオドメトリ回転−アンカーからの教示方位差」で今のdpsiを予測するのに使う
+（15 s・8ノード以内のアンカーだけ。蓄積したオドメトリ方位は使わない）。
+アンカーも無いときは停止して待ち（`--heading-align-fallback-after`、既定5フレーム）、
 それでも測れなければ地図の隣接ノード間の教示方位差だけオドメトリで回る（救済処置）。1回の回転が20 sを超えたら進む。
 判定は`/toponav/heading_align`（`placenav_viz_msgs/HeadingAlign`、毎周期）に出し、path adapterは有効な間だけ
-waypointの代わりに「現在位置で目標方位へ向く」2点のPathをTEBへ渡す（無効・1 s以上途絶で通常に戻る）。
+waypointの代わりに「今の位置（TF）で目標方位へ向く」2点のPathをTEBへ渡す（無効・1 s以上途絶で通常に戻る）。
 分割推論（`remote_role:=waypoint`）ではparrot側（localization）が判定し、Xavier側は無視する。
 依存：`pip install -r requirements-heading-align.txt`（kornia、LightGlue固定コミット）。重みは
 `src/model_weights/torch_hub_checkpoints/checkpoints/`の`superpoint_v1.pth`と`superpoint_lightglue_v0-1_arxiv.pth`
