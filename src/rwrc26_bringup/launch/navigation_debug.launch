@@ -21,6 +21,11 @@
   <arg name="goal_recovery_threshold" default=""/>
   <arg name="turn_check_start_deg" default=""/>
   <arg name="turn_required_ratio" default=""/>
+  <arg name="heading_align" default="false"/>
+  <arg name="heading_align_start_deg" default=""/>
+  <arg name="heading_align_done_deg" default=""/>
+  <arg name="heading_align_resize" default=""/>
+  <arg name="heading_align_max_keypoints" default=""/>
   <arg name="final_goal_tolerance" default=""/>
   <arg name="goal_eval_position_tolerance" default=""/>
   <arg name="goal_eval_yaw_tolerance" default=""/>
@@ -64,6 +69,11 @@
     <arg name="goal_recovery_threshold" value="$(arg goal_recovery_threshold)"/>
     <arg name="turn_check_start_deg" value="$(arg turn_check_start_deg)"/>
     <arg name="turn_required_ratio" value="$(arg turn_required_ratio)"/>
+    <arg name="heading_align" value="$(arg heading_align)"/>
+    <arg name="heading_align_start_deg" value="$(arg heading_align_start_deg)"/>
+    <arg name="heading_align_done_deg" value="$(arg heading_align_done_deg)"/>
+    <arg name="heading_align_resize" value="$(arg heading_align_resize)"/>
+    <arg name="heading_align_max_keypoints" value="$(arg heading_align_max_keypoints)"/>
     <arg name="final_goal_tolerance" value="$(arg final_goal_tolerance)"/>
     <arg name="goal_eval_position_tolerance" value="$(arg goal_eval_position_tolerance)"/>
     <arg name="goal_eval_yaw_tolerance" value="$(arg goal_eval_yaw_tolerance)"/>

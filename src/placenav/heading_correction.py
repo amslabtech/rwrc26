@@ -75,11 +75,18 @@ def register_heading_estimator(cls):
     return cls
 
 
+def _register_optional_estimators():
+    # Their heavy dependencies (torch, LightGlue) load only when an estimator is built.
+    import placenav.rotation_estimation  # noqa: F401  registers lg_rotation
+
+
 def heading_estimator_names():
+    _register_optional_estimators()
     return sorted(_ESTIMATORS)
 
 
 def make_heading_estimator(name, topomap_dir, image_names, **options):
+    _register_optional_estimators()
     if name not in _ESTIMATORS:
         raise ValueError(f"Unknown heading estimator {name!r}; choose from {heading_estimator_names()}")
     return _ESTIMATORS[name](topomap_dir, image_names, **options)

@@ -213,6 +213,25 @@ max(15°, 教示角 × `turn_required_ratio`) に達し、現在もその必要�
 
 比較用の `subgoal_update:=arrival_turn` は初版（154c6ed）の判定を使う。直前の通常到達からの教示方位差が15°以上なら、位置条件に加え同方向に教示角の50%以上旋回したときに進む。角単位の回転持ち越しは行わず、前方救済の成立時は候補に直接移る。最終停止条件は共通。
 
+実験用の `heading_align:=true`（既定false、arrival系の`subgoal_update`が必要）は、角でOmniVLA-edgeが大きく回れない・
+逆へ曲がる問題への対策。サブゴールkに位置で到達したとき、現在画像とノードk画像の向きの差dpsiを
+SuperPoint+LightGlue（等距離魚眼・回転のみRANSAC、`placenav/rotation_estimation.py`）で測り、
+|dpsi|が`heading_align_start_deg`（既定25°）以下ならそのまま次へ進む。超えたらその場で回転し、
+`heading_align_done_deg`（既定15°、TEBの`yaw_goal_tolerance` 0.2 radより大きくする）以下になってから進む。
+回転は地図作成時に曲がった場所（ノード位置）で行うので角を突っ切らず、角の密集ノードは一つずつ踏み石になる。
+蓄積したオドメトリ方位は使わず、オドメトリは1回の回転の間だけ測定値を保持するのに使う。
+画像で測れないときは停止して待ち（`--heading-align-fallback-after`、既定5フレーム）、
+それでも測れなければ地図の隣接ノード間の教示方位差だけオドメトリで回る（救済処置）。1回の回転が20 sを超えたら進む。
+判定は`/toponav/heading_align`（`placenav_viz_msgs/HeadingAlign`、毎周期）に出し、path adapterは有効な間だけ
+waypointの代わりに「現在位置で目標方位へ向く」2点のPathをTEBへ渡す（無効・1 s以上途絶で通常に戻る）。
+分割推論（`remote_role:=waypoint`）ではparrot側（localization）が判定し、Xavier側は無視する。
+依存：`pip install -r requirements-heading-align.txt`（kornia、LightGlue固定コミット）。重みは
+`src/model_weights/torch_hub_checkpoints/checkpoints/`の`superpoint_v1.pth`と`superpoint_lightglue_v0-1_arxiv.pth`
+（無ければ初回に自動取得）。`placenav_viz_msgs`の再ビルドも必要。
+処理時間の計測：`python3 scripts/benchmark_heading_align.py --topomap-dir src/topomaps/images/<route> --hfov 140`
+（解像度・特徴点数ごとの1回の測定時間と精度。結果に合わせて`heading_align_resize`・`heading_align_max_keypoints`を選ぶ）。
+結合確認：`python3 tests/check_heading_align_ros.py`。
+
 通常のXYリセットは`nearest`・`passage`・`arrival`共通で`local_pose_reset`を切り替えられる。
 各モードで`local_pose:=true`のままリセットをtrue/falseにして6パターンを比較できる。
 補正内容は記録ノードのXYへの位置合わせで、nearestは画像変更時の推定現在ノード、

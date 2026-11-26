@@ -70,6 +70,21 @@ def local_poses(
     return poses
 
 
+def rotation_poses(x: float, y: float, yaw: float, target_yaw: float,
+                   stamp: rospy.Time, frame_id: str) -> List[PoseStamped]:
+    """An in-place rotation path: the robot pose, then the same position at target_yaw."""
+    poses = []
+    for heading in (yaw, target_yaw):
+        pose = PoseStamped()
+        pose.header.stamp = stamp
+        pose.header.frame_id = frame_id
+        pose.pose.position.x = x
+        pose.pose.position.y = y
+        pose.pose.orientation = quaternion_from_yaw(heading)
+        poses.append(pose)
+    return poses
+
+
 class GnmPathAdapter:
     def __init__(self):
         self.input_topic = rospy.get_param("~input_topic", "/toponav/viz_info")
@@ -83,12 +98,29 @@ class GnmPathAdapter:
             rospy.get_param("~transform_timeout", 0.2)
         )
 
+        # navigate.py --heading-align: while active, rotate in place instead of following waypoints.
+        self.heading_align_topic = rospy.get_param("~heading_align_topic", "/toponav/heading_align")
+        self.heading_align_timeout = rospy.Duration(rospy.get_param("~heading_align_timeout", 1.0))
+        self.heading_align = None
+        self.heading_align_received = None
+
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
         self.path_publisher = rospy.Publisher(self.output_topic, Path, queue_size=1)
         self.viz_subscriber = rospy.Subscriber(
             self.input_topic, Viz, self.viz_callback, queue_size=1
         )
+
+        self.heading_align_subscriber = None
+        if self.heading_align_topic:
+            try:
+                from placenav_viz_msgs.msg import HeadingAlign
+            except ImportError:
+                rospy.logwarn("placenav_viz_msgs has no HeadingAlign (rebuild it); heading alignment is ignored")
+            else:
+                self.heading_align_subscriber = rospy.Subscriber(
+                    self.heading_align_topic, HeadingAlign, self.heading_align_callback, queue_size=1
+                )
 
         rospy.loginfo(
             "GNM path adapter: %s (%s, waypoint x offset %.3f m) -> %s (%s)",
@@ -99,7 +131,41 @@ class GnmPathAdapter:
             self.target_frame,
         )
 
+    def heading_align_active(self) -> bool:
+        return (
+            self.heading_align is not None
+            and self.heading_align.active
+            and rospy.Time.now() - self.heading_align_received <= self.heading_align_timeout
+        )
+
+    def heading_align_callback(self, message):
+        was_active = self.heading_align_active()
+        self.heading_align, self.heading_align_received = message, rospy.Time.now()
+        if message.active != was_active:
+            rospy.loginfo(
+                "Heading align %s: %s at node %d",
+                "start" if message.active else "end", message.status, message.node_idx,
+            )
+        if not message.active:
+            return
+        if message.header.frame_id != self.target_frame:
+            rospy.logwarn_throttle(
+                2.0, "Heading align pose frame %s is not %s; not rotating",
+                message.header.frame_id, self.target_frame,
+            )
+            return
+        path = Path()
+        path.header.stamp = message.header.stamp
+        path.header.frame_id = self.target_frame
+        path.poses = rotation_poses(
+            message.robot.x, message.robot.y, message.robot.theta, message.target_yaw,
+            message.header.stamp, self.target_frame,
+        )
+        self.path_publisher.publish(path)
+
     def viz_callback(self, message: Viz):
+        if self.heading_align_active():
+            return  # the rotation path from heading_align_callback is in charge
         if not message.waypoints:
             rospy.logwarn_throttle(2.0, "GNM path contains no waypoints")
             return
@@ -162,6 +228,9 @@ def parse_args():
     parser.add_argument("--transform-timeout", type=float, default=0.2)
     parser.add_argument("--expected-waypoints", type=int, default=5)
     parser.add_argument("--no-origin", action="store_true")
+    parser.add_argument("--heading-align-topic", default="/toponav/heading_align",
+                        help="navigate.py --heading-align output; empty disables")
+    parser.add_argument("--heading-align-timeout", type=float, default=1.0)
     return parser.parse_args(rospy.myargv()[1:])
 
 
@@ -175,6 +244,8 @@ def main():
     rospy.set_param("~transform_timeout", args.transform_timeout)
     rospy.set_param("~expected_waypoints", args.expected_waypoints)
     rospy.set_param("~include_origin", not args.no_origin)
+    rospy.set_param("~heading_align_topic", args.heading_align_topic)
+    rospy.set_param("~heading_align_timeout", args.heading_align_timeout)
     GnmPathAdapter()
     rospy.spin()
 

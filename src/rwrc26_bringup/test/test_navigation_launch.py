@@ -153,6 +153,46 @@ class NavigationLaunchTest(unittest.TestCase):
                         self.assertIs(args.local_pose_reset, enabled)
                         self.assertEqual(sum(n.name == 'local_goal_visualizer' for n in config.nodes), 1)
 
+    def test_heading_align_reaches_the_parser_in_both_launches(self):
+        import importlib.util
+        from unittest.mock import patch
+        import sys
+        def module(name, path):
+            spec = importlib.util.spec_from_file_location(name, path)
+            value = importlib.util.module_from_spec(spec); spec.loader.exec_module(value)
+            return value
+        runner = module('align_runner', ROOT/'scripts/session_runner.py')
+        parser = module('align_parser', ROOT.parent/'placenav/parser.py')
+        required = ['--robot', 'whill', '--robot-config-path', 'robots.yaml',
+                    '--model-config-path', 'models.yaml', '--topomap-base-dir', 'maps',
+                    '--model-weight-dir', 'weights']
+        prefix = '/placenav_runner/'
+        for launch in [LAUNCH, ROOT/'launch/navigation_debug.launch']:
+            with self.subTest(launch=launch.name, enabled=False):
+                config = load_config_default([(str(launch), [])], 11311, verbose=False)
+                params = {k[len(prefix):]:p.value for k,p in config.params.items() if k.startswith(prefix)}
+                params['placenav_src'] = str(ROOT.parent)
+                self.assertNotIn('--heading-align', runner.navigation_command(params)[0])
+            with self.subTest(launch=launch.name, enabled=True):
+                config = load_config_default([(str(launch), [
+                    'heading_align:=true', 'heading_align_start_deg:=30', 'heading_align_done_deg:=12',
+                    'heading_align_resize:=800', 'heading_align_max_keypoints:=512'])], 11311, verbose=False)
+                params = {k[len(prefix):]:p.value for k,p in config.params.items() if k.startswith(prefix)}
+                params['placenav_src'] = str(ROOT.parent)
+                command, _ = runner.navigation_command(params)
+                with patch.object(sys, 'argv', ['navigate.py']+required+command[2:]):
+                    args = parser.parse_args()
+                self.assertIs(args.heading_align, True)
+                self.assertEqual((args.heading_align_start_deg, args.heading_align_done_deg,
+                                  args.heading_align_resize, args.heading_align_max_keypoints), (30., 12., 800, 512))
+                with self.assertRaises(ValueError):
+                    runner.navigation_command(dict(params, subgoal_update='passage'))
+                # The Xavier waypoint role gets the same flags and ignores them.
+                xavier, _ = runner.xavier_navigation_command(
+                    dict(params, remote_navigation=True, remote_role='waypoint'), str(ROOT.parent))
+                with patch.object(sys, 'argv', ['navigate.py']+required+xavier[2:]):
+                    self.assertEqual(parser.parse_args().nav_role, 'waypoint')
+
     def test_frames_reach_gates_tf_batch_maps_teb_and_path_runner(self):
         config, params = self.load('global_frame:=test_odom', 'robot_base_frame:=test_base',
                                    'odom_topic:=/test/odom', 'fusion_mode:=points', 'debug_costmaps:=true')
@@ -191,6 +231,7 @@ class NavigationLaunchTest(unittest.TestCase):
         topics = args[5:]
         self.assertIn('/toponav/goal_evaluation', topics)
         self.assertIn('/toponav/local_goal_pose', topics)
+        self.assertIn('/toponav/heading_align', topics)
         self.assertFalse(any(t.startswith('/rwrc26/') for t in topics))  # diagnostics add no topics
         self.assertTrue(all(t.startswith('/') for t in topics))
         self.assertEqual(len(topics), len(set(topics)))

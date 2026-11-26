@@ -16,6 +16,7 @@
     /toponav/localization_diagnostics
     /toponav/goal_evaluation
     /toponav/local_goal_pose
+    /toponav/heading_align
     /toponav/viz_info
     /toponav/reached_goal
     /placenav/gnm_path

@@ -56,6 +56,7 @@ find_package(catkin REQUIRED COMPONENTS
    GoalEvaluation.msg
    LocalGoalPose.msg
    SubgoalCommand.msg
+   HeadingAlign.msg
  )
 
 ## Generate services in the 'srv' folder

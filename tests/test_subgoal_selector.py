@@ -79,6 +79,34 @@ class SelectorTest(unittest.TestCase):
         self.assertEqual(sel.turn_anchor[0], 4)
         self.assertEqual(sel.peak_signed_turn, 0.)
 
+    def test_arrival_gate_holds_the_subgoal_until_it_allows(self):
+        calls, allow = [], [False]
+        def gate(node):
+            calls.append(node)
+            return allow[0]
+        sel = ProgressSubgoalSelector(self.motion, 4, mode='arrival', arrival_gate=gate)
+        self.mass((0, 1)); sel.update(0, 1)
+        self.mass((3.5, 1))
+        self.assertEqual(sel.update(1, 2), (1, False))
+        self.assertEqual((sel.status, calls), ('ALIGNING', [1]))
+        allow[0] = True
+        self.assertEqual(sel.update(1, 3), (2, False))
+        self.assertEqual(sel.status, 'ADVANCED_ARRIVAL')
+
+    def test_arrival_gate_is_not_asked_far_from_the_goal_or_at_the_final_goal(self):
+        calls = []
+        sel = ProgressSubgoalSelector(self.motion, 1, mode='arrival', arrival_gate=lambda n: calls.append(n))
+        self.mass((0, 1)); sel.update(0, 1)
+        self.mass((1.5, 1)); sel.update(0, 2)
+        self.assertEqual(calls, [])
+        self.mass((3.5, 1)); sel.update(1, 3); sel.update(1, 4)
+        self.assertTrue(sel.reached)
+        self.assertEqual(calls, [])
+
+    def test_arrival_gate_needs_an_arrival_mode(self):
+        with self.assertRaises(ValueError):
+            ProgressSubgoalSelector(self.motion, 4, mode='passage', arrival_gate=lambda n: True)
+
     def test_turn_forward_recovery_exposes_one_goal(self):
         sel = ProgressSubgoalSelector(self.motion, 4, mode='arrival_turn_bend')
         self.mass((0, 1))

@@ -32,6 +32,13 @@
   <arg name="goal_recovery_threshold" default=""/>
   <arg name="turn_check_start_deg" default=""/>
   <arg name="turn_required_ratio" default=""/>
+  <!-- Experimental: advance a subgoal only after the camera faces the node heading; rotates in place
+       when |dpsi| > start (SuperPoint+LightGlue; needs requirements-heading-align.txt and an arrival subgoal_update). -->
+  <arg name="heading_align" default="false"/>
+  <arg name="heading_align_start_deg" default=""/>
+  <arg name="heading_align_done_deg" default=""/>
+  <arg name="heading_align_resize" default=""/>
+  <arg name="heading_align_max_keypoints" default=""/>
   <arg name="final_goal_tolerance" default=""/>
   <arg name="goal_eval_position_tolerance" default=""/>
   <!-- Legacy command-line angle override is still in radians. YAML uses degrees. -->
@@ -103,6 +110,7 @@
     /toponav/localization_diagnostics
     /toponav/goal_evaluation
     /toponav/local_goal_pose
+    /toponav/heading_align
     /toponav/viz_info
     /toponav/reached_goal
     /placenav/gnm_path
@@ -202,6 +210,11 @@
     <param if="$(eval arg('goal_recovery_threshold') != '')" name="goal_recovery_threshold" value="$(arg goal_recovery_threshold)" type="double"/>
     <param if="$(eval arg('turn_check_start_deg') != '')" name="turn_check_start_deg" value="$(arg turn_check_start_deg)" type="double"/>
     <param if="$(eval arg('turn_required_ratio') != '')" name="turn_required_ratio" value="$(arg turn_required_ratio)" type="double"/>
+    <param name="heading_align" value="$(arg heading_align)" type="bool"/>
+    <param if="$(eval arg('heading_align_start_deg') != '')" name="heading_align_start_deg" value="$(arg heading_align_start_deg)" type="double"/>
+    <param if="$(eval arg('heading_align_done_deg') != '')" name="heading_align_done_deg" value="$(arg heading_align_done_deg)" type="double"/>
+    <param if="$(eval arg('heading_align_resize') != '')" name="heading_align_resize" value="$(arg heading_align_resize)" type="int"/>
+    <param if="$(eval arg('heading_align_max_keypoints') != '')" name="heading_align_max_keypoints" value="$(arg heading_align_max_keypoints)" type="int"/>
     <param if="$(eval arg('final_goal_tolerance') != '')" name="final_goal_tolerance" value="$(arg final_goal_tolerance)" type="double"/>
     <param if="$(eval arg('goal_eval_position_tolerance') != '')" name="goal_eval_position_tolerance" value="$(arg goal_eval_position_tolerance)" type="double"/>
     <param if="$(eval arg('goal_eval_yaw_tolerance') != '')" name="goal_eval_yaw_tolerance" value="$(arg goal_eval_yaw_tolerance)" type="double"/>
