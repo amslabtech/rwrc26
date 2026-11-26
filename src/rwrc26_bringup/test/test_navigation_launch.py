@@ -271,6 +271,42 @@ class NavigationLaunchTest(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(Exception):
                 load_config_default([(str(launch), ['bag_start:='+value])], 11311, verbose=False)
 
+    def test_clearing_costmaps_stay_inside_gate_marking_band(self):
+        import math
+        configs = ROOT.parent/'source_costmaps/config'
+        debug = ROOT/'launch/navigation_debug.launch'
+        prefix = '/placenav_teb_bridge/local_costmap/'
+        # Defaults keep the decay-only configs.
+        for launch in (LAUNCH, debug):
+            params = {k: p.value for k, p in
+                      load_config_default([(str(launch), [])], 11311, verbose=False).params.items()}
+            for layer in ('d435', 'unik3d'):
+                self.assertEqual(params[prefix+layer+'/observation_sources'], 'cloud')
+        for launch, name in ((LAUNCH, 'costmap_clearing.yaml'), (debug, 'costmap_dev_clearing.yaml')):
+            config = load_config_default([(str(launch), ['costmap_config:='+str(configs/name)])],
+                                         11311, verbose=False)
+            params = {k: p.value for k, p in config.params.items()}
+            for layer, frame in (('d435', 'realsense_color_optical_frame'),
+                                 ('unik3d', 'c2_camera_optical_frame')):
+                with self.subTest(config=name, layer=layer):
+                    base = prefix+layer+'/'
+                    clear = base+'cloud_clear/'
+                    gate = '/obstacles/'+layer+'_gate/'
+                    self.assertEqual(params[base+'observation_sources'], 'cloud cloud_clear')
+                    self.assertIs(params[clear+'clearing'], True)
+                    self.assertIs(params[clear+'marking'], False)
+                    self.assertEqual(params[clear+'model_type'], 0)
+                    self.assertEqual(params[clear+'topic'], params[base+'cloud/topic'])
+                    self.assertEqual(params[clear+'topic'], params[gate+'output_topic'])
+                    self.assertEqual(params[clear+'sensor_frame'], frame)
+                    # STVL frustum: corner range == max_z, near plane at
+                    # min_z*cos(v/2)*cos(h/2); both must stay in the gate's range band.
+                    h, v = params[clear+'horizontal_fov_angle'], params[clear+'vertical_fov_angle']
+                    near = params[clear+'min_z']*math.cos(v/2)*math.cos(h/2)
+                    self.assertGreaterEqual(near, params[gate+'min_range'])
+                    self.assertLessEqual(params[clear+'max_z'], params[gate+'max_range'])
+                    self.assertGreater(params[clear+'decay_acceleration'], 0)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -23,3 +23,14 @@ roslaunch rwrc26_bringup navigation.launch
 ```
 
 統合 launch と `costmaps.launch` を同時に起動しない。
+
+`config/costmap{,_dev}_clearing.yaml` は既存設定に STVL の視錐台クリア
+(`cloud_clear`: D435 / UniK3D それぞれの gate 出力、`marking: false, clearing: true`)
+を加えた版。視野内で再観測されないボクセルを `decay_acceleration` で早く消し、
+視野外は `voxel_decay` で保持する。視錐台は gate の距離帯の内側に収めてある
+(根拠と式は yaml 冒頭、検証は `tools/stvl/frustum_check.py`)。
+
+```bash
+roslaunch rwrc26_bringup navigation_debug.launch \
+  costmap_config:=$(rospack find source_costmaps)/config/costmap_dev_clearing.yaml
+```

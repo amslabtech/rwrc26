@@ -29,6 +29,8 @@
   <arg name="server_port" default="5557"/>
   <arg name="rviz" default="true"/>
   <arg name="navigation_visualization" default="false"/>
+  <!-- costmap_dev_clearing.yaml adds STVL frustum clearing for the D435 and UniK3D layers. -->
+  <arg name="costmap_config" default="$(find source_costmaps)/config/costmap_dev.yaml"/>
 
   <arg name="bag" default=""/>
   <arg name="bag_start" default="0.0"/>
@@ -71,7 +73,7 @@
     <arg name="rviz" value="$(arg rviz)"/>
     <arg name="navigation_visualization" value="$(arg navigation_visualization)"/>
     <arg name="gates_config" default="$(find source_costmaps)/config/gates_dev.yaml"/>
-    <arg name="costmap_config" default="$(find source_costmaps)/config/costmap_dev.yaml"/>
+    <arg name="costmap_config" value="$(arg costmap_config)"/>
     <arg name="bridge_config" default="$(find placenav_teb_bridge)/config/bridge_dev.yaml"/>
     <!-- Keep RViz and the costmap available after PlaceNav reaches the goal. -->
     <arg name="navigation_required" value="false"/>
