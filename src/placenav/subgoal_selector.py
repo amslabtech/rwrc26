@@ -16,7 +16,7 @@ class ProgressSubgoalSelector:
                  threshold=0.5, confirmations=2, min_local_mass=0.8,
                  final_tolerance=0.5, evaluation_config=None,
                  recovery_distance=4.0, recovery_threshold=0.8,
-                 turn_check_start_deg=30., turn_required_ratio=0.25):
+                 turn_check_start_deg=30., turn_required_ratio=0.25, arrival_gate=None):
         # arrival_turn_bend shares all arrival behavior except the relative-yaw gate.
         self.bend_turn = mode == 'arrival_turn_bend'
         self.turn_enabled = self.bend_turn or mode == 'arrival_turn'
@@ -58,6 +58,11 @@ class ProgressSubgoalSelector:
             raise ValueError('Recovery distance must cover the metric neighborhood')
         self.motion, self.final_node = motion, final_node
         self.mode, self.lookahead = mode, lookahead
+        # Optional gate(node) -> bool before an intermediate arrival advances the subgoal
+        # (heading_align.HeadingAligner.gate). Final arrival and recovery are not gated.
+        if arrival_gate is not None and self.mode != 'arrival':
+            raise ValueError('arrival_gate requires an arrival subgoal update')
+        self.arrival_gate = arrival_gate
         self.threshold, self.confirmations = threshold, confirmations
         self.min_local_mass, self.final_tolerance = min_local_mass, final_tolerance
         self.recovery_distance, self.recovery_threshold = recovery_distance, recovery_threshold
@@ -187,6 +192,11 @@ class ProgressSubgoalSelector:
             # target-node arrival window needs one fresh image; recovery and
             # final stopping retain their configured consecutive confirmation.
             required = 1 if self.mode == 'arrival' and not is_final else self.confirmations
+            if (self.count >= required and not is_final and self.arrival_gate is not None
+                    and not self.arrival_gate(self.subgoal)):
+                self.count = 0
+                self.status = 'ALIGNING'
+                return self.subgoal, False
             if self.count >= required:
                 self.reset_confirmation()
                 if is_final:

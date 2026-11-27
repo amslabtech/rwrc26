@@ -38,6 +38,7 @@ from frame_gate import FrameGate
 from placenav_viz_msgs.msg import Viz, LocalizationDiagnostics, GoalEvaluation
 
 SUBGOAL_COMMAND_TOPIC = '/toponav/subgoal_command'  # --nav-role localization -> waypoint
+HEADING_ALIGN_TOPIC = '/toponav/heading_align'  # --heading-align -> gnm_path_adapter
 
 class PlaceNavNode:
 
@@ -127,6 +128,12 @@ class PlaceNavNode:
         self._raw_frames = OrderedDict()
         if getattr(args, 'heading_correction', 'none') != 'none' and self.nav_role != 'waypoint':
             self._setup_heading_correction(args)
+        # Like the subgoal selector, heading alignment belongs to the localization side.
+        self.heading_aligner = None
+        self.heading_align_estimator = None
+        self._heading_align_status = None
+        if getattr(args, 'heading_align', False) and self.nav_role != 'waypoint':
+            self._setup_heading_align(args)
 
         self._setup_ros()
 
@@ -306,6 +313,75 @@ class PlaceNavNode:
         rospy.loginfo('Heading correction at subgoal switches: %s (camera HFOV %.1f deg)',
                       args.heading_correction, float(hfov))
 
+    def _setup_heading_align(self, args):
+        """Image heading alignment at subgoal arrivals (placenav/heading_align.py)."""
+        from placenav.heading_correction import make_heading_estimator
+        hfov = args.camera_hfov_deg or self.robot_config.get('camera_hfov_deg')
+        if hfov is None:
+            raise ValueError('--heading-align needs --camera-hfov-deg or camera_hfov_deg in the robot config')
+        weights = args.heading_align_weights_dir  # None: PlaceNav's torch hub dir (model_weights/torch_hub_checkpoints)
+        self.heading_align_estimator = make_heading_estimator(
+            'lg_rotation', self.topomap_img_dir, self.topomap_filenames, camera_hfov_deg=float(hfov),
+            resize=args.heading_align_resize, max_keypoints=args.heading_align_max_keypoints,
+            min_inliers=args.heading_align_min_inliers, weights_dir=weights)
+        rospy.loginfo('Heading alignment at arrivals: start %.0f / done %.0f deg, SuperPoint+LightGlue '
+                      'resize %d, %d keypoints, HFOV %.1f deg (%s)', args.heading_align_start_deg,
+                      args.heading_align_done_deg, args.heading_align_resize,
+                      args.heading_align_max_keypoints, float(hfov), self.heading_align_estimator.device)
+
+    def _remaining_to(self, node):
+        """Route metres from the belief's median progress to `node` (None before the first subgoal)."""
+        if node is None:
+            return None
+        motion = self.place_recognition_querier.motion
+        if motion.probability is None:
+            return None
+        cdf = np.cumsum(motion.probability)
+        if cdf[-1] <= 0:
+            return None
+        median = float(motion.grid_s[min(int(np.searchsorted(cdf, 0.5 * cdf[-1])), len(cdf) - 1)])
+        return float(motion.node_s[node]) - median
+
+    def _measure_heading(self, image, node):
+        """dpsi of the current image against a node image, or None."""
+        if image is None:
+            rospy.logwarn_throttle(5, 'No retained image for heading alignment')
+            return None
+        start = time.time()
+        try:
+            estimate = self.heading_align_estimator.estimate(image, node)
+        except Exception as error:  # a broken image must not stop navigation
+            rospy.logwarn_throttle(2, 'Heading alignment estimate for node %s failed: %s', node, error)
+            return None
+        last = self.heading_align_estimator.last
+        rospy.logdebug('Heading vs node %s: %s (%d matches, %d inliers, %.0f ms)', node,
+                       'none' if estimate is None else '%+.1f deg' % math.degrees(estimate.dpsi),
+                       last.get('matches', 0), last.get('inliers', 0), 1000 * (time.time() - start))
+        return estimate
+
+    def _publish_heading_align(self, stamp, odometry, command, current_node, subgoal):
+        from geometry_msgs.msg import Pose2D
+        from placenav_viz_msgs.msg import HeadingAlign
+        x, y, yaw = odometry.pose
+        message = HeadingAlign()
+        message.header.stamp = stamp
+        message.header.frame_id = odometry.frame_id
+        message.active = command.active
+        message.status = command.status
+        message.current_node_idx, message.subgoal_idx = current_node, subgoal
+        message.node_idx = command.node
+        message.dpsi, message.support, message.source = command.dpsi, command.support, command.source
+        message.robot = Pose2D(x=x, y=y, theta=yaw)
+        message.target_yaw = command.target_yaw if command.active else yaw
+        self.heading_align_pub.publish(message)
+        if command.status != self._heading_align_status:
+            quiet = (None, 'IDLE', 'ALIGNED', 'APPROACH')  # routine; every event is in the bag
+            if command.status not in quiet or self._heading_align_status not in quiet:
+                rospy.loginfo('Heading align %s at node %s (dpsi %s, %s)', command.status, command.node,
+                              'n/a' if math.isnan(command.dpsi) else '%+.0f deg' % math.degrees(command.dpsi),
+                              command.source or '-')
+            self._heading_align_status = command.status
+
     def _request_heading(self, stamp):
         """Ask for the heading at the node the tracker was just anchored to."""
         corrector, tracker = getattr(self, 'heading_corrector', None), self.local_pose_tracker
@@ -405,6 +481,9 @@ class PlaceNavNode:
         if self.local_pose_enabled:
             from placenav_viz_msgs.msg import LocalGoalPose
             self.local_pose_pub = rospy.Publisher('/toponav/local_goal_pose', LocalGoalPose, queue_size=1)
+        if getattr(self, 'heading_align_estimator', None) is not None:
+            from placenav_viz_msgs.msg import HeadingAlign
+            self.heading_align_pub = rospy.Publisher(HEADING_ALIGN_TOPIC, HeadingAlign, queue_size=1)
         if self.nav_role == 'localization':
             from placenav_viz_msgs.msg import SubgoalCommand
             # Latched: a restarted waypoint node gets the last command (and a final reached_goal).
@@ -429,7 +508,8 @@ class PlaceNavNode:
         img = bridge.imgmsg_to_cv2(msg, desired_encoding="rgb8")
         vpr_img = self._vpr_transform(img).unsqueeze(0)
         with self.obs_lock:
-            if getattr(self, 'heading_corrector', None) is not None:
+            if (getattr(self, 'heading_corrector', None) is not None or
+                    getattr(self, 'heading_align_estimator', None) is not None):
                 # Full image for heading measurements; kept apart from the copied context.
                 self._raw_frames[msg.header.stamp.to_nsec()] = img
                 while len(self._raw_frames) > self.context_size + 2:
@@ -656,6 +736,18 @@ class PlaceNavNode:
         assert -1 <= args.goal_node_idx < self.map_size, "Invalid goal index"
         if args.goal_node_idx == -1:
             args.goal_node_idx = self.map_size - 1
+        if getattr(self, 'heading_align_estimator', None) is not None:
+            if self.motion_model != 'odometry':
+                raise ValueError('--heading-align requires --motion-model odometry')
+            from placenav.heading_align import HeadingAlignConfig, HeadingAligner
+            self.heading_aligner = HeadingAligner(
+                self.place_recognition_querier.motion.node_yaw,
+                HeadingAlignConfig(start_deg=args.heading_align_start_deg, done_deg=args.heading_align_done_deg,
+                                   timeout=args.heading_align_timeout,
+                                   fallback_after=args.heading_align_fallback_after,
+                                   approach_distance=args.heading_align_approach_distance,
+                                   approach_interval=args.heading_align_approach_interval,
+                                   anchor_max_age=args.heading_align_anchor_max_age))
         if self.motion_model == 'odometry':
             self.goal_selector = ProgressSubgoalSelector(
                 self.place_recognition_querier.motion, args.goal_node_idx,
@@ -666,7 +758,8 @@ class PlaceNavNode:
                 evaluation_config=self.goal_evaluation_config,
                 recovery_distance=args.goal_recovery_distance,
                 recovery_threshold=args.goal_recovery_threshold,
-                turn_check_start_deg=args.turn_check_start_deg, turn_required_ratio=args.turn_required_ratio)
+                turn_check_start_deg=args.turn_check_start_deg, turn_required_ratio=args.turn_required_ratio,
+                arrival_gate=getattr(getattr(self, 'heading_aligner', None), 'gate', None))
             if self.local_pose_enabled:
                 from placenav.local_pose import LocalPoseConfig, LocalPoseTracker
                 self.local_pose_tracker = LocalPoseTracker(
@@ -742,8 +835,20 @@ class PlaceNavNode:
                     # How many nodes ahead from closest node to choose the subgoal
                     if self.goal_selector is not None:
                         previous_goal = self.goal_selector.subgoal
+                        if getattr(self, 'heading_aligner', None) is not None:
+                            with self.obs_lock:
+                                align_image = self._raw_frames.get(current_obs_timestamp.to_nsec())
+                            self.heading_aligner.new_cycle(
+                                lambda node, image=align_image: self._measure_heading(image, node),
+                                odometry.pose[2], current_obs_timestamp.to_sec(),
+                                previous_goal, self._remaining_to(previous_goal))
                         subgoal_idx, reached_goal = self.goal_selector.update(
                             closest_node_idx, current_obs_timestamp.to_nsec())
+                        if getattr(self, 'heading_aligner', None) is not None:
+                            self._publish_heading_align(
+                                current_obs_timestamp, odometry,
+                                self.heading_aligner.finish_cycle(subgoal_idx, reached_goal),
+                                closest_node_idx, subgoal_idx)
                         if previous_goal != subgoal_idx:
                             rospy.loginfo('Subgoal %s -> %s (%s, %s)', previous_goal,
                                           subgoal_idx, self.goal_selector.status,

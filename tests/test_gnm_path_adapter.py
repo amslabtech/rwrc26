@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from placenav.gnm_path_adapter import waypoint_yaws, local_poses  # noqa: E402
+from placenav.gnm_path_adapter import waypoint_yaws, local_poses, rotation_poses  # noqa: E402
 from placenav.utils import waypoints_to_ros_msg
 import numpy as np
 import rospy
@@ -50,6 +50,18 @@ class WaypointYawsTest(unittest.TestCase):
         self.assertAlmostEqual(result[0], 0.0)
         self.assertAlmostEqual(result[1], math.pi / 2.0)
         self.assertAlmostEqual(result[2], math.pi / 2.0)
+
+
+class RotationPosesTest(unittest.TestCase):
+    def test_same_position_from_current_to_target_yaw(self):
+        poses = rotation_poses(1.0, 2.0, 0.3, -1.2, rospy.Time(5), "odom")
+        self.assertEqual(len(poses), 2)  # the TEB bridge needs at least two poses
+        for pose in poses:
+            self.assertEqual(pose.header.frame_id, "odom")
+            self.assertEqual((pose.pose.position.x, pose.pose.position.y), (1.0, 2.0))
+        yaws = [2 * math.atan2(p.pose.orientation.z, p.pose.orientation.w) for p in poses]
+        self.assertAlmostEqual(yaws[0], 0.3)
+        self.assertAlmostEqual(yaws[1], -1.2)
 
 
 if __name__ == "__main__":

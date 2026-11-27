@@ -113,6 +113,34 @@ def navigation_command(params):
         if not math.isfinite(start) or start <= 0 or not 0 < ratio <= 1:
             raise ValueError('Invalid relative turn thresholds')
         command += ['--turn-check-start-deg', str(start), '--turn-required-ratio', str(ratio)]
+    align = params.get('heading_align', False)
+    if not isinstance(align, bool):
+        raise ValueError('heading_align must be a YAML boolean')
+    if align:
+        if motion != 'odometry' or update not in ('arrival', 'arrival_turn', 'arrival_turn_bend'):
+            raise ValueError('heading_align requires odometry and an arrival subgoal_update')
+        command.append('--heading-align')
+        for name in ('heading_align_start_deg', 'heading_align_done_deg'):
+            if name in params:
+                value = float(params[name])
+                if not math.isfinite(value) or not 0 < value < 180:
+                    raise ValueError('Invalid '+name)
+                command += ['--'+name.replace('_', '-'), str(value)]
+        if 'heading_align_approach_distance' in params:
+            value = float(params['heading_align_approach_distance'])
+            if not math.isfinite(value) or value < 0:
+                raise ValueError('Invalid heading_align_approach_distance')
+            command += ['--heading-align-approach-distance', str(value)]
+        for name in ('heading_align_resize', 'heading_align_max_keypoints'):
+            if name in params:
+                if type(params[name]) is not int or params[name] <= 0:
+                    raise ValueError(name+' must be a positive integer')
+                command += ['--'+name.replace('_', '-'), str(params[name])]
+        if 'camera_hfov_deg' in params and '--camera-hfov-deg' not in command:
+            hfov = float(params['camera_hfov_deg'])
+            if not math.isfinite(hfov) or not 0 < hfov < 360:
+                raise ValueError('camera_hfov_deg must be in (0, 360)')
+            command += ['--camera-hfov-deg', str(hfov)]
     count = int(params.get('pass_confirmations', 2))
     if count < 1:
         raise ValueError('pass_confirmations must be positive')

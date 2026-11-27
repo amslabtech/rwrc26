@@ -16,6 +16,7 @@
     /toponav/localization_diagnostics
     /toponav/goal_evaluation
     /toponav/local_goal_pose
+    /toponav/heading_align
     /toponav/viz_info
     /toponav/reached_goal
     /placenav/gnm_path
@@ -30,7 +31,6 @@
     /whill/controller/cmd_vel
     /realsense/color/image_raw/compressed
     /realsense/color/camera_info
-    /placenav_teb_bridge/control_status
     /realsense/depth/camera_info
     /realsense/depth/image_rect_raw/compressedDepth
     /placenav_teb_bridge/retained_safe_path

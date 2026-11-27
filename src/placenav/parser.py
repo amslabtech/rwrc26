@@ -186,6 +186,32 @@ def parse_args():
                         help='Nearest+lookahead, retained passage, position arrival, or arrival with relative odometry turn')
     parser.add_argument('--turn-check-start-deg', type=positive_float, default=30.)
     parser.add_argument('--turn-required-ratio', type=probability, default=0.25)
+    parser.add_argument('--heading-align', action='store_true',
+                        help='Experimental: on a positional arrival, advance the subgoal only after the live image '
+                             'faces the node heading (SuperPoint+LightGlue, rotation only); rotate in place via '
+                             '/toponav/heading_align and the path adapter when |dpsi| > --heading-align-start-deg')
+    parser.add_argument('--heading-align-start-deg', type=positive_float, default=20.)
+    parser.add_argument('--heading-align-done-deg', type=positive_float, default=13.,
+                        help='Rotation end; keep above the TEB yaw_goal_tolerance (0.2 rad = 11.5 deg)')
+    parser.add_argument('--heading-align-timeout', type=positive_float, default=20.)
+    parser.add_argument('--heading-align-fallback-after', type=positive_int, default=5,
+                        help='Frames without an image measurement or a recent anchor before rotating by the '
+                             'taught node-to-node yaw')
+    parser.add_argument('--heading-align-approach-distance', type=nonnegative_float, default=2.,
+                        help='Also measure the subgoal while within this many route metres of it (0: off); '
+                             'the latest measurement predicts dpsi when the arrival image cannot be matched')
+    parser.add_argument('--heading-align-approach-interval', type=nonnegative_float, default=.5)
+    parser.add_argument('--heading-align-anchor-max-age', type=nonnegative_float, default=15.,
+                        help='Seconds an image measurement may predict later dpsi (with odometry yaw and '
+                             'the taught yaw between nodes)')
+    parser.add_argument('--heading-align-resize', type=positive_int, default=1024,
+                        help='SuperPoint input long side (px); see scripts/benchmark_heading_align.py')
+    parser.add_argument('--heading-align-max-keypoints', type=positive_int, default=1024)
+    parser.add_argument('--heading-align-min-inliers', type=positive_int, default=20)
+    parser.add_argument('--heading-align-weights-dir', type=Path, default=None,
+                        help='torch hub dir holding checkpoints/superpoint_v1.pth and '
+                             'superpoint_lightglue_v0-1_arxiv.pth (default: src/model_weights/'
+                             'torch_hub_checkpoints, as the VPR models; downloaded there if missing)')
     parser.add_argument('--pass-threshold', type=probability, default=0.5)
     parser.add_argument('--pass-confirmations', type=positive_int, default=2,
                         help='Fresh-image confirmations for passage, recovery and final stopping; '
@@ -260,6 +286,12 @@ def parse_args():
             parser.error(f"--heading-correction must be 'none' or one of {heading_estimator_names()}")
         if not args.local_pose:
             parser.error('--heading-correction requires --local-pose')
+    if args.heading_align:
+        # Ignored by --nav-role waypoint (the localization side runs it), like --local-pose.
+        if args.motion_model != 'odometry' or args.subgoal_update not in ('arrival', 'arrival_turn', 'arrival_turn_bend'):
+            parser.error('--heading-align requires --motion-model odometry and an arrival --subgoal-update')
+        if args.heading_align_done_deg > args.heading_align_start_deg or args.heading_align_start_deg >= 180:
+            parser.error('--heading-align needs done <= start < 180 degrees')
     if args.goal_eval_yaw_tolerance > math.pi:
         parser.error('--goal-eval-yaw-tolerance must not exceed pi')
     if args.goal_eval_neighborhood_radius < args.goal_eval_position_tolerance:
