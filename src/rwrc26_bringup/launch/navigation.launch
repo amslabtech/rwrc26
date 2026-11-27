@@ -130,9 +130,7 @@
     /realsense/depth/camera_info
     /realsense/depth/image_rect_raw/compressedDepth
     /placenav_teb_bridge/retained_safe_path
-    /placenav_teb_bridge/diagnostics
-    /toponav/heading_align/status
-    "/>
+    /placenav_teb_bridge/diagnostics"/>
   <arg name="debug_costmaps" default="false"/>
   <arg name="rviz" default="true"/>
   <arg name="use_sim_time" default="false"/>
