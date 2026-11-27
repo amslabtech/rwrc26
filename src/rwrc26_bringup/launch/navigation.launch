@@ -145,7 +145,13 @@
     /realsense/depth/camera_info
     /realsense/depth/image_rect_raw/compressedDepth
     /placenav_teb_bridge/retained_safe_path
-    /placenav_teb_bridge/diagnostics"/>
+    /placenav_teb_bridge/diagnostics
+    /road_edge/detected_raw
+    /road_edge/detected
+    /road_edge/normalized_y
+    /road_edge/target
+    /road_edge/target_passed
+    /road_edge/gate_status"/>
   <arg name="debug_costmaps" default="false"/>
   <arg name="rviz" default="true"/>
   <arg name="use_sim_time" default="false"/>
