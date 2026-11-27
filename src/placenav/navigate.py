@@ -329,6 +329,19 @@ class PlaceNavNode:
                       args.heading_align_done_deg, args.heading_align_resize,
                       args.heading_align_max_keypoints, float(hfov), self.heading_align_estimator.device)
 
+    def _remaining_to(self, node):
+        """Route metres from the belief's median progress to `node` (None before the first subgoal)."""
+        if node is None:
+            return None
+        motion = self.place_recognition_querier.motion
+        if motion.probability is None:
+            return None
+        cdf = np.cumsum(motion.probability)
+        if cdf[-1] <= 0:
+            return None
+        median = float(motion.grid_s[min(int(np.searchsorted(cdf, 0.5 * cdf[-1])), len(cdf) - 1)])
+        return float(motion.node_s[node]) - median
+
     def _measure_heading(self, image, node):
         """dpsi of the current image against a node image, or None."""
         if image is None:
@@ -362,7 +375,8 @@ class PlaceNavNode:
         message.target_yaw = command.target_yaw if command.active else yaw
         self.heading_align_pub.publish(message)
         if command.status != self._heading_align_status:
-            if command.status not in ('IDLE', 'ALIGNED') or self._heading_align_status not in (None, 'IDLE', 'ALIGNED'):
+            quiet = (None, 'IDLE', 'ALIGNED', 'APPROACH')  # routine; every event is in the bag
+            if command.status not in quiet or self._heading_align_status not in quiet:
                 rospy.loginfo('Heading align %s at node %s (dpsi %s, %s)', command.status, command.node,
                               'n/a' if math.isnan(command.dpsi) else '%+.0f deg' % math.degrees(command.dpsi),
                               command.source or '-')
@@ -730,7 +744,10 @@ class PlaceNavNode:
                 self.place_recognition_querier.motion.node_yaw,
                 HeadingAlignConfig(start_deg=args.heading_align_start_deg, done_deg=args.heading_align_done_deg,
                                    timeout=args.heading_align_timeout,
-                                   fallback_after=args.heading_align_fallback_after))
+                                   fallback_after=args.heading_align_fallback_after,
+                                   approach_distance=args.heading_align_approach_distance,
+                                   approach_interval=args.heading_align_approach_interval,
+                                   anchor_max_age=args.heading_align_anchor_max_age))
         if self.motion_model == 'odometry':
             self.goal_selector = ProgressSubgoalSelector(
                 self.place_recognition_querier.motion, args.goal_node_idx,
@@ -823,7 +840,8 @@ class PlaceNavNode:
                                 align_image = self._raw_frames.get(current_obs_timestamp.to_nsec())
                             self.heading_aligner.new_cycle(
                                 lambda node, image=align_image: self._measure_heading(image, node),
-                                odometry.pose[2], current_obs_timestamp.to_sec())
+                                odometry.pose[2], current_obs_timestamp.to_sec(),
+                                previous_goal, self._remaining_to(previous_goal))
                         subgoal_idx, reached_goal = self.goal_selector.update(
                             closest_node_idx, current_obs_timestamp.to_nsec())
                         if getattr(self, 'heading_aligner', None) is not None:

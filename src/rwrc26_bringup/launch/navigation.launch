@@ -37,6 +37,7 @@
   <arg name="heading_align" default="false"/>
   <arg name="heading_align_start_deg" default=""/>
   <arg name="heading_align_done_deg" default=""/>
+  <arg name="heading_align_approach_distance" default=""/>
   <arg name="heading_align_resize" default=""/>
   <arg name="heading_align_max_keypoints" default=""/>
   <arg name="final_goal_tolerance" default=""/>
@@ -134,7 +135,8 @@
   <arg name="rviz" default="true"/>
   <arg name="use_sim_time" default="false"/>
   <param name="use_sim_time" value="$(arg use_sim_time)" type="bool"/>
-  <param name="/gnm_path_adapter/waypoint_x_offset" value="0.62152" type="double"/>
+  <!-- <param name="/gnm_path_adapter/waypoint_x_offset" value="0.62152" type="double"/> -->
+  <param name="/gnm_path_adapter/waypoint_x_offset" value="0.0" type="double"/>
 
   <include file="$(find unidepth_ros)/launch/c2_unidepth.launch">
     <arg name="image_topic" value="$(arg image_topic)"/>
@@ -213,6 +215,7 @@
     <param name="heading_align" value="$(arg heading_align)" type="bool"/>
     <param if="$(eval arg('heading_align_start_deg') != '')" name="heading_align_start_deg" value="$(arg heading_align_start_deg)" type="double"/>
     <param if="$(eval arg('heading_align_done_deg') != '')" name="heading_align_done_deg" value="$(arg heading_align_done_deg)" type="double"/>
+    <param if="$(eval arg('heading_align_approach_distance') != '')" name="heading_align_approach_distance" value="$(arg heading_align_approach_distance)" type="double"/>
     <param if="$(eval arg('heading_align_resize') != '')" name="heading_align_resize" value="$(arg heading_align_resize)" type="int"/>
     <param if="$(eval arg('heading_align_max_keypoints') != '')" name="heading_align_max_keypoints" value="$(arg heading_align_max_keypoints)" type="int"/>
     <param if="$(eval arg('final_goal_tolerance') != '')" name="final_goal_tolerance" value="$(arg final_goal_tolerance)" type="double"/>

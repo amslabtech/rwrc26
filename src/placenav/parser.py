@@ -190,12 +190,20 @@ def parse_args():
                         help='Experimental: on a positional arrival, advance the subgoal only after the live image '
                              'faces the node heading (SuperPoint+LightGlue, rotation only); rotate in place via '
                              '/toponav/heading_align and the path adapter when |dpsi| > --heading-align-start-deg')
-    parser.add_argument('--heading-align-start-deg', type=positive_float, default=25.)
-    parser.add_argument('--heading-align-done-deg', type=positive_float, default=15.,
-                        help='Rotation end; keep above the TEB yaw_goal_tolerance (0.2 rad)')
+    parser.add_argument('--heading-align-start-deg', type=positive_float, default=20.)
+    parser.add_argument('--heading-align-done-deg', type=positive_float, default=13.,
+                        help='Rotation end; keep above the TEB yaw_goal_tolerance (0.2 rad = 11.5 deg)')
     parser.add_argument('--heading-align-timeout', type=positive_float, default=20.)
     parser.add_argument('--heading-align-fallback-after', type=positive_int, default=5,
-                        help='Frames without an image measurement before rotating by the taught node-to-node yaw')
+                        help='Frames without an image measurement or a recent anchor before rotating by the '
+                             'taught node-to-node yaw')
+    parser.add_argument('--heading-align-approach-distance', type=nonnegative_float, default=2.,
+                        help='Also measure the subgoal while within this many route metres of it (0: off); '
+                             'the latest measurement predicts dpsi when the arrival image cannot be matched')
+    parser.add_argument('--heading-align-approach-interval', type=nonnegative_float, default=.5)
+    parser.add_argument('--heading-align-anchor-max-age', type=nonnegative_float, default=15.,
+                        help='Seconds an image measurement may predict later dpsi (with odometry yaw and '
+                             'the taught yaw between nodes)')
     parser.add_argument('--heading-align-resize', type=positive_int, default=1024,
                         help='SuperPoint input long side (px); see scripts/benchmark_heading_align.py')
     parser.add_argument('--heading-align-max-keypoints', type=positive_int, default=1024)
